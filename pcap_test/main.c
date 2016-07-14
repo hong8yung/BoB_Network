@@ -2,30 +2,17 @@
 #include <pcap/pcap.h>
 #include <arpa/inet.h>
 
-#define TYP_INIT 0
-#define TYP_SMLE 1
-#define TYP_BIGE 2
+#define DM 0    // destination mac
+#define SM 6    // source mac
+#define PID 23  // Protocol ID
+#define SIP 26  // source ip
+#define DIP 30  //destination ip
+#define SPORT 34    //source port
+#define DPORT 36    //destination port
 
-unsigned long long htonll(unsigned long long src) {
-  static int typ = TYP_INIT;
-  unsigned char c;
-  union {
-    unsigned long long ull;
-    unsigned char c[8];
-  } x;
-  if (typ == TYP_INIT) {
-    x.ull = 0x01;
-    typ = (x.c[7] == 0x01ULL) ? TYP_BIGE : TYP_SMLE;
-  }
-  if (typ == TYP_BIGE)
-    return src;
-  x.ull = src;
-  c = x.c[0]; x.c[0] = x.c[7]; x.c[7] = c;
-  c = x.c[1]; x.c[1] = x.c[6]; x.c[6] = c;
-  c = x.c[2]; x.c[2] = x.c[5]; x.c[5] = c;
-  c = x.c[3]; x.c[3] = x.c[4]; x.c[4] = c;
-  return x.ull;
-}
+#define TYPE_IP 0x0800
+#define IP_TCP 0x06
+#define IP_UDP 0x11
 
 int main(int argc, char *argv[])
 {
@@ -33,7 +20,8 @@ int main(int argc, char *argv[])
     char * spNetDevName = pcap_lookupdev(errbuf);
     const char *pcap_v;
     pcap_t* pDes;
-    const u_char* ucData;
+    bpf_u_int32 mask;
+    bpf_u_int32 net;
 
     int res;
     struct pcap_pkthdr *header;
@@ -41,9 +29,9 @@ int main(int argc, char *argv[])
 
     unsigned short dport, sport;
     unsigned long dip, sip;
-    unsigned long long dm, sm;
+    unsigned char dm[6], sm[6];
 
-    //unsiged short dport = *((unsigned short*)&(tcp_hdr[2]));
+    void print_IP(unsigned long ip);
 
     pcap_v = pcap_lib_version();
 
@@ -56,6 +44,12 @@ int main(int argc, char *argv[])
         printf("Network Device Name : [%s]\n", spNetDevName);
     }
 
+    if (pcap_lookupnet(spNetDevName, &net, &mask, errbuf) == -1) {
+                fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
+                net = 0;
+                mask = 0;
+            }
+
     pDes = pcap_open_live(spNetDevName, 1500, 1 ,0, errbuf);
     if(0 == pDes){
         printf("[-]Error : [%s]\n",errbuf);
@@ -65,52 +59,64 @@ int main(int argc, char *argv[])
         //iDatalink = pcap_datalink(pDes);
     }
 
-    res = pcap_next_ex(pDes, &header, &pkt_data);
-    printf("packet data : %d : %llX\n", header->len, pkt_data);
+    while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
+        if(ntohs(*((unsigned short*)&(pkt_data[12])))!=TYPE_IP) continue; // case by not follow ip header
 
-    for(int i=0; i<38; i++){
-        if(!(i%8)) printf("\n");
-        printf("%02X ",*(pkt_data+i));
+        for(int i=0; i<38; i++){    // print for header(HEX)
+            if(!(i%8)) printf("\n");
+            printf("%02X ",*(pkt_data+i));
+        }
+        printf("\n");
+
+        for(int i=0; i<6; i++){
+            dm[i] = (pkt_data[DM+i]);
+        }
+
+        for(int i=0; i<6; i++){
+            sm[i] = (pkt_data[SM+i]);
+        }
+
+        printf("\nSource Mac : ");
+        print_MAC(sm);
+
+        printf("Destination Mac : ");
+        print_MAC(dm);
+
+        sip = ntohl(*((unsigned long*)&(pkt_data[SIP])));
+        dip = ntohl(*((unsigned long*)&(pkt_data[DIP])));
+
+        printf("\nSource Ip : ");
+        print_IP(sip);
+
+        printf("Destination Ip : ");
+        print_IP(dip);
+
+        if((pkt_data[PID]==IP_TCP)||(pkt_data[PID]==IP_UDP)){
+            sport = ntohs(*((unsigned short*)&(pkt_data[SPORT])));
+            dport = ntohs(*((unsigned short*)&(pkt_data[DPORT])));
+
+            printf("\nSource Port : %d\n",sport);
+            printf("Destination Port : %d\n",dport);
+        }else{
+             printf("\nNot UDP or TCP Protocol\n");
+        }
+        printf("========================================================\n");
     }
-
-    //dm = ntohll(*((unsigned long long*)(pkt_data+0)));
-    //sm = ntohll(*((unsigned long long*)&(pkt_data[6])));
-    sip = ntohl(*((unsigned long*)&(pkt_data[26])));
-    dip = ntohl(*((unsigned long*)&(pkt_data[30])));
-
-    sport = ntohs(*((unsigned short*)&(pkt_data[34])));
-    dport = ntohs(*((unsigned short*)&(pkt_data[36])));
-
-    printf("\nSource Ip : ");
-    print_IP(sip);
-
-    /*
-    for(int i=0; i<4; i++){
-        unsigned char tmp = *((unsigned char*)(&sip)+(3-i));
-        printf("%d",tmp);
-        if(i!=3) printf(".");
-        else printf("\n");
-    }*/
-
-    printf("Destination Ip : ");
-    for(int i=0; i<4; i++){
-        unsigned char tmp = *((unsigned char*)(&dip)+(3-i));
-        printf("%d",tmp);
-        if(i!=3) printf(".");
-        else printf("\n");
-    }
-
-    printf("\nSource Port : %d\n",sport);
-    printf("Destination Port : %d\n",dport);
-
-    printf("\n");
     return 0;
 }
 
 void print_IP(unsigned long ip){
-    for(int i; i<4; i++){
+    for(int i=0; i<4; i++){
         printf("%d",*((unsigned char*)(&ip)+(3-i)));
         if(3!=i) printf(".");
+        else printf("\n");
+    }
+}
+
+void print_MAC(unsigned char * mac){
+    for(int i=0; i<6; i++){
+        printf("%02X",*(mac+i));
+        if(5!=i) printf(":");
         else printf("\n");
     }
 }
