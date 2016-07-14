@@ -56,7 +56,6 @@ int main(int argc, char *argv[])
         return 101;
     }else{
         printf("[+]Network Device Ready!\n");
-        //iDatalink = pcap_datalink(pDes);
     }
 
     while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
