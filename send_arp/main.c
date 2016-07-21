@@ -5,7 +5,6 @@
 #include <netinet/tcp.h>
 #include <netinet/ether.h>
 #include <net/if_arp.h>
-#include <netinet/in.h>
 #include <string.h>   //strncpy
 #include <sys/ioctl.h>
 #include <net/if.h>   //ifreq
@@ -17,6 +16,7 @@
 // get_mac.c
 #include <stdlib.h>
 #include <linux/rtnetlink.h>
+#include <pthread.h>
 
 #define BUFSIZE 8192
 
@@ -69,7 +69,6 @@ int readNlSock(int sockFd, char *bufPtr, int seqNum, int pId)
 
     return msgLen;
 }
-
 
 /* parse the route info returned */
 void parseRoutes(struct nlmsghdr *nlHdr, struct route_info *rtInfo){
@@ -196,11 +195,23 @@ int main(int argc, char *argv[])
     struct pcap_pkthdr *header;
     const unsigned char *pkt_data;
 
+    unsigned char req_arp[42];
+
     struct ifreq ifr;
     char *iface = NULL;
-    unsigned char *att_mac = NULL;
+    u_int8_t *att_mac = NULL;
     unsigned char *att_ip = NULL;
 
+    unsigned char victim_ip[4];
+    unsigned char victim_mac[ETH_ALEN];
+    unsigned char gw_ip[4];
+    unsigned char gw_mac[ETH_ALEN];
+
+
+    victim_ip[0] = 192;
+    victim_ip[1] = 168;
+    victim_ip[2] = 6;
+    victim_ip[3] = 129;
     char gateway[20];
     get_gatewayip(gateway, 20);
 
@@ -232,18 +243,25 @@ int main(int argc, char *argv[])
     iface = spNetDevName;
     memset(&ifr, 0, sizeof(ifr));
 
+    struct ether_header ehp;
+
     fd = socket(AF_INET, SOCK_DGRAM, 0);
 
     ifr.ifr_addr.sa_family = AF_INET;
     strncpy(ifr.ifr_name, iface, IFNAMSIZ-1);
 
     if (0 == ioctl(fd,SIOCGIFHWADDR, &ifr)){    // get mac addr
-        att_mac = (unsigned char *)ifr.ifr_hwaddr.sa_data;
+        att_mac = (u_int8_t *)ifr.ifr_hwaddr.sa_data;
 
         printf("Mac : %.2X:%.2X:%.2X:%.2X:%.2X:%.2X\n",
                att_mac[0],att_mac[1],att_mac[2],att_mac[3],att_mac[4],att_mac[5]
                );
     }
+
+    for(int i=0; i<6; i++){
+        ehp.ether_shost[i] = att_mac[i];
+    }
+
 
     if(0 == ioctl(fd, SIOCGIFADDR, &ifr)){
         att_ip = (unsigned char *)ifr.ifr_addr.sa_data;
@@ -254,23 +272,205 @@ int main(int argc, char *argv[])
 
     close(fd);
 
-    struct ether_header ehp;
+
 
     for(int i=0; i<6; i++){
         ehp.ether_dhost[i] = 0xff;
     }
 
-    for(int i=0; i<6; i++){
-        ehp.ether_shost[i] = (u_int8_t)att_mac[i];
-    }
+    u_int32_t tmp_ip[4];
+    for(int i=0; i<4; i++) tmp_ip[i] = att_ip[2+i];
 
-    ehp.ether_type = ETHERTYPE_ARP;
+    ehp.ether_type = htons(ETHERTYPE_ARP);
 
-    printf("size?:%d\n",sizeof(struct ether_header));
     printf("DM : ");
     print_MAC(ehp.ether_dhost);
     printf("SM : ");
     print_MAC(ehp.ether_shost);
+    printf("proto : %2X\n",ntohs(ehp.ether_type));
+
+    struct arphdr ahp;
+    ahp.ar_hrd = htons(ARPHRD_ETHER);
+    ahp.ar_pro = htons(ETHERTYPE_IP);
+    ahp.ar_hln = ETH_ALEN;
+    ahp.ar_pln = 4; // case ipv4 : 4byte
+    ahp.ar_op = htons(ARPOP_REQUEST);
+
+    for(int i=0; i<6; i++){
+       ahp.__ar_sha[i] = ehp.ether_dhost[i];
+    }
+    for(int i=0; i<4; i++){
+       ahp.__ar_sip[i] = tmp_ip[i];
+    }
+    for(int i=0; i<6; i++){
+       ahp.__ar_tha[i] = 0x00;
+    }
+    /*
+    for(int i=0; i<4; i++){
+       ahp.__ar_tip[i] = ehp.ether_dhost[i];
+    }*/
+    ahp.__ar_tip[0] = (unsigned char)victim_ip[0];
+    ahp.__ar_tip[1] = (unsigned char)victim_ip[1];
+    ahp.__ar_tip[2] = (unsigned char)victim_ip[2];
+    ahp.__ar_tip[3] = (unsigned char)victim_ip[3];
+
+    memcpy(req_arp, &ehp, sizeof(ehp));
+    memcpy(&req_arp[sizeof(ehp)], (unsigned char*)&ahp, sizeof(ahp));
+/*
+    int state;
+    pthread_t t_id;
+    // here we go
+    state = pthread_create(&t_id, NULL, thread_function,NULL);
+*/
+    if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0){
+           fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
+           return;
+       }
+
+    while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
+        if(res==0) {
+            printf("none\n");
+            continue;
+        }
+        struct ether_header * ch_ehp = (struct ether_header *)pkt_data;
+        printf("after%d\n",sizeof(ch_ehp->ether_type));
+
+        printf("victim ing ETHERYPTE : %04X",ntohs(ch_ehp->ether_type));
+
+        if(ntohs(ch_ehp->ether_type) != ETHERTYPE_ARP){
+            printf("[-]Not ARP packet!\n");
+        }
+        else{
+//            for(int i=0; i<42; i++){    // print for header(HEX)
+//                if(!(i%8)) printf("\n");
+//                printf("%02X ",*(pkt_data+i));
+//            }
+            printf("cc\n");
+            fflush(stdin);
+            printf("\n%d : %d",1);
+            struct arphdr* ch_ahp = (struct arphdr *)(pkt_data[14]);
+
+            printf("arpop : %04X",htons(ch_ahp->ar_op));
+            if(ntohs(ch_ahp->ar_op) == ARPOP_REPLY){ // reply? from victim address?
+                if(strncmp(ch_ahp->__ar_sip, victim_ip, sizeof(victim_ip)) == 0){
+                    for(int i=0; i<ETH_ALEN; i++)
+                    victim_mac[i]=ch_ahp->__ar_sha[i];
+
+                    printf("victim's mac addr : ");
+                    print_MAC((u_int8_t)victim_mac);
+                    printf("\n");
+                    break;
+                }
+                else printf("correct arp but not victim:(\n");
+            }
+        }
+
+        printf("========================================================\n");
+    }
+    /* sendpacket example
+    if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0)
+       {
+
+           fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
+           return;
+       }
+    */
+/*
+    while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
+
+
+        printf("\n");
+
+        struct ether_header * ch_ehp = pkt_data;
+
+        //printf("victim ing ETHERYPTE : %04X",htons(ch_ehp->ether_type));
+
+        if(ntohs(ch_ehp->ether_type) != ETHERTYPE_ARP) continue;
+        else{
+            for(int i=0; i<42; i++){    // print for header(HEX)
+                if(!(i%8)) printf("\n");
+                printf("%02X ",*(unsigned char *)(pkt_data+i));
+            }
+            struct arphdr* ch_ahp = (struct arphdr *)(&pkt_data+sizeof(struct ether_header));
+
+            printf("arpop : %04X",htons(ch_ahp->ar_op));
+            if(ntohs(ch_ahp->ar_op) == ARPOP_REPLY){ // reply? from victim address?
+                if(strncmp(ch_ahp->__ar_sip, victim_ip, sizeof(victim_ip)) == 0){
+                    for(int i=0; i<ETH_ALEN; i++)
+                    victim_mac[i]=ch_ahp->__ar_sha[i];
+
+                    printf("victim's mac addr : ");
+                    print_MAC((u_int8_t)victim_mac);
+                    printf("\n");
+                    break;
+                }
+                else printf("correct arp but not victim:(\n");
+            }
+        }
+
+        printf("========================================================\n");
+    }
+*/
+
+
+    /*  debug to victim's arp packet
+    for(int i=0; i<42; i++){    // print for header(HEX)
+        if(!(i%8)) printf("\n");
+        printf("%02X ",*(unsigned char *)(req_arp+i));
+    }
+  */
+
+/*
+    ahp.__ar_tip[0] = (unsigned char)192;
+    ahp.__ar_tip[1] = (unsigned char)168;
+    ahp.__ar_tip[2] = (unsigned char)6;
+    ahp.__ar_tip[3] = (unsigned char)2;
+
+    memcpy(&req_arp[sizeof(ehp)], (unsigned char*)&ahp, sizeof(ahp));
+
+    if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0)
+       {
+
+           fprintf(stderr,"\nError sending the packet: \n", pcap_geterr(pDes));
+           return;
+       }
+
+    for(int i=0; i<42; i++){    // print for header(HEX)
+        if(!(i%8)) printf("\n");
+        printf("%02X ",*(unsigned char *)(req_arp+i));
+    }
+
+    while((res=(pDes, &header, &pkt_data))>=0){
+        for(int i=0; i<38; i++){    // print for header(HEX)
+            if(!(i%8)) printf("\n");
+            printf("%02X ",*(pkt_data+i));
+        }
+        printf("\n");
+
+        struct ether_header * ch_ehp = &pkt_data;
+
+        printf("ETHERYPTE : %02X",ch_ehp->ether_type);
+        if(ch_ehp->ether_type != ETHERTYPE_ARP) continue;
+        else{
+            struct arphdr* ch_ahp = (struct arphdr*)(pkt_data+sizeof(struct ether_header));
+
+            printf("arpop : %02X",ch_ahp->ar_op);
+            if(ch_ahp->ar_op == ARPOP_REPLY){ // reply? from gateway address? plz revision
+                if(strncmp(ch_ahp->__ar_sip, ahp.__ar_tip, sizeof(victim_ip)) == 0){
+                    for(int i=0; i<ETH_ALEN; i++)
+                        gw_mac[i]=ch_ahp->__ar_sha[i];
+
+                    printf("gateway's mac addr : ");
+                    print_MAC((u_int8_t)gw_mac);
+                    printf("\n");
+                    break;
+                }
+            }
+        }
+
+        printf("========================================================\n");
+    }
+*/
 
     /*
     res = pcap_next_ex(pDes, &header, &pkt_data);
@@ -291,14 +491,10 @@ int main(int argc, char *argv[])
     */
 
     /*
-    struct arphdr* ahp;
+
     strncpy(pkt_data, )
 
-    if (pcap_sendpacket(pDes, packet, 42) != 0)
-       {
-           fprintf(stderr,"\nError sending the packet: \n", pcap_geterr(fp));
-           return;
-       }
+
     */
 
     /*
@@ -344,7 +540,7 @@ int main(int argc, char *argv[])
         printf("========================================================\n");
     }
     */
-
+    pcap_close(pDes);
     return 0;
 }
 
@@ -356,6 +552,14 @@ void print_IP(unsigned long ip){
     }
 }
 
+
+void print_IP_str(unsigned char * ip){
+    for(int i=0; i<4; i++){
+        printf("%d",*((unsigned char*)ip+i));
+        if(3!=i) printf(".");
+        else printf("\n");
+    }
+}
 void print_MAC(u_int8_t * mac){
     for(int i=0; i<6; i++){
         printf("%02X",*(mac+i));
