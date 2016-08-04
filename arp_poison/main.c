@@ -5,8 +5,14 @@
 #include <netinet/ether.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+#include <net/if.h>
 #include <net/if_arp.h>
-
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <string.h>
 #include <linux/rtnetlink.h> // getgateway ip nlmsgdhr, rtmsg etc...
 #include <arpa/inet.h>
 
@@ -19,20 +25,19 @@ struct route_info{
     char ifName[IF_NAMESIZE];
 };
 
-
-int readNLSock(int, char *, int, int);
-void parseRoutes(struct nlmsgdr *, struct route_info *rtInfo);
+int readNlSock(int, char *, int, int);
 int get_gatewayip(char *, socklen_t);
-
+void parseRoutes(struct nlmsghdr *, struct route_info *);
 
 int main(int argc, char *argv[])
 {
     char errbuf[PCAP_ERRBUF_SIZE];
-    char * spNetDevNmae = pcap_lookupdev(errbuf);   // find network device name
+    char * spNetDevName = pcap_lookupdev(errbuf);
     pcap_t* pDes;
-    bpf_u_int32 mask, net;
+    bpf_u_int32 mask;
+    bpf_u_int32 net;
 
-    int res, fd;
+    int res,fd;
     struct pcap_pkthdr *header;
     const unsigned char *pkt_data;
 
@@ -43,32 +48,33 @@ int main(int argc, char *argv[])
     u_int8_t *att_mac = NULL;
     unsigned char *att_ip = NULL;
 
-    char gateway[20];
-
     u_int32_t my_mac[ETH_ALEN];
     u_int32_t my_ip[4];
+
     unsigned char victim_mac[ETH_ALEN];
     unsigned char victim_ip[4];
 
-    if(0 == spNetDevNmae){
-        printf("errbuf : [-][%s]\n",errbuf);
+    struct ether_header ehp;
+
+    char gateway[20];
+    get_gatewayip(gateway, 20);
+    inet_aton(argv[1], victim_ip);
+
+    fprintf(stderr,"gateway:%s\n",gateway);
+
+    if(0 == spNetDevName){
+        printf("errbuf  :[%s]\n",errbuf);
         return 100;
     }else{
-        printf("[+]Network Device Name : [%s]\n", spNetDevNmae);
-    }  printf("here??");
+        printf("Network Device Name : [%s]\n", spNetDevName);
+    }
 
     if (pcap_lookupnet(spNetDevName, &net, &mask, errbuf) == -1) {
         fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
-        printf("here??");
         net = 0;
         mask = 0;
     }
 
-    printf("here??");
-    get_gatewayip(gateway, 20);
-    //inet_aton(argv[1], victim_ip);
-    inet_aton("192.168.6.129", victim_ip);
-    fprintf(stderr, "gateway:%s\n", gateway);
     pDes = pcap_open_live(spNetDevName, 1500, 1 , 1, errbuf);
     if(0 == pDes){
         printf("[-]Error : [%s]\n",errbuf);
@@ -79,6 +85,7 @@ int main(int argc, char *argv[])
 
     iface = spNetDevName;
     memset(&ifr, 0, sizeof(ifr));
+
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -93,9 +100,7 @@ int main(int argc, char *argv[])
                 );
     }
 
-
     memcpy(my_mac, att_mac,6);
-    struct ether_header ehp;
 
     for(int i=0; i<6; i++){
         ehp.ether_shost[i] = att_mac[i];
@@ -178,14 +183,120 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-int readNlSock(int sockFd, char *bufPtr, int seqNum, int pId)
+/* parse the route info returned */
+void parseRoutes(struct nlmsghdr *nlHdr, struct route_info *rtInfo){
+    struct rtmsg *rtMsg;
+    struct rtattr *rtAttr;
+    int rtLen;
 
-{
+    rtMsg = (struct rtMsg *)NLMSG_DATA(nlHdr);
+
+    /* If the route is ot for AF_INET or does not belong to main routing table then return. */
+    if((rtMsg->rtm_family != AF_INET) || (rtMsg->rtm_table != RT_TABLE_MAIN))
+        return ;
+
+    /* get the rtattr filed */
+    rtAttr = (struct rtattr *)RTM_RTA(rtMsg);
+    rtLen = RTM_PAYLOAD(nlHdr);
+
+    for(;RTA_OK(rtAttr,rtLen);rtAttr = RTA_NEXT(rtAttr,rtLen)){
+        switch(rtAttr->rta_type){
+        case RTA_OIF:
+            if_indextoname(*(int *)RTA_DATA(rtAttr), rtInfo->ifName);
+            break;
+
+        case RTA_GATEWAY:
+            memcpy(&rtInfo->gateWay, RTA_DATA(rtAttr), sizeof(rtInfo->gateWay));
+            break;
+
+        case RTA_PREFSRC:
+            memcpy(&rtInfo->srcAddr, RTA_DATA(rtAttr), sizeof(rtInfo->srcAddr));
+            break;
+
+        case RTA_DST:
+            memcpy(&rtInfo->dstAddr, RTA_DATA(rtAttr), sizeof(rtInfo->dstAddr));
+            break;
+        }
+
+    }
+
+    return;
+}
+
+int get_gatewayip(char *gatewayip, socklen_t size){
+    int found_gatewayip = 0;
+
+    struct nlmsghdr *nlMsg;
+    struct rtmsg *rtMsg;
+    struct route_info *rtInfo;
+
+    char msgBuf[BUFSIZE]; // pretty large buffer
+    int sock, len, msgSeq = 0;
+
+    /* Create Socket */
+    if((sock = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE)) < 0){
+        perror("Socket Creation: ");
+
+        return -1;
+    }
+
+
+    /* Initialize the buffer */
+    memset(msgBuf, 0, BUFSIZE);
+
+
+    /* point the header and the msg structure pointers into the buffer */
+    nlMsg = (struct nlmsghdr *)msgBuf;
+    rtMsg = (struct rtmsg *)NLMSG_DATA(nlMsg);
+
+    /* Fill in the nlmsg header*/
+    nlMsg->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg)); // Length of message.
+    nlMsg->nlmsg_type = RTM_GETROUTE; // Get the routes from kernel routing table .
+    nlMsg->nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST; // The message is a request for dump.
+    nlMsg->nlmsg_seq = msgSeq++; // Sequence of the message packet.
+    nlMsg->nlmsg_pid = getpid(); // PID of process sending the request.
+
+    /* Send the request */
+    if(send(sock, nlMsg, nlMsg->nlmsg_len, 0) < 0){
+        fprintf(stderr, "Write To Socket Failed...\n");
+
+        return -1;
+    }
+
+    /* Read the response */
+    if((len = readNlSock(sock, msgBuf, msgSeq, getpid())) < 0){
+        fprintf(stderr, "Read From Socket Failed...\n");
+
+        return -1;
+    }
+
+    /* Parse and print the response */
+    rtInfo = (struct route_info *)malloc(sizeof(struct route_info));
+
+    for(;NLMSG_OK(nlMsg,len);nlMsg = NLMSG_NEXT(nlMsg,len)){
+        memset(rtInfo, 0, sizeof(struct route_info));
+        parseRoutes(nlMsg, rtInfo);
+
+        // Check if default gateway
+        if (strstr((char *)inet_ntoa(rtInfo->dstAddr), "0.0.0.0")){
+            // copy it over
+            inet_ntop(AF_INET, &rtInfo->gateWay, gatewayip, size);
+            found_gatewayip = 1;
+            break;
+        }
+    }
+
+    free(rtInfo);
+    close(sock);
+
+    return found_gatewayip;
+}
+
+int readNlSock(int sockFd, char *bufPtr, int seqNum, int pId){
     struct nlmsghdr *nlHdr;
     int readLen = 0, msgLen = 0;
 
     do{
-
         /* Recieve response from the kernel */
         if((readLen = recv(sockFd, bufPtr, BUFSIZE - msgLen, 0)) < 0){
             perror("SOCK READ: ");
@@ -222,108 +333,3 @@ int readNlSock(int sockFd, char *bufPtr, int seqNum, int pId)
     return msgLen;
 }
 
-/* parse the route info returned */
-void parseRoutes(struct nlmsgdr *nlHdr, struct route_info *rtInfo){
-    struct rtmsg *rtMsg;
-    struct rtattr *rtAttr;
-    int rtLen;
-
-    rtMsg = (struct rtMsg *)NLMSG_DATA(nlHdr);
-
-    /* If the route is ot for AF_INET or does not belong to main routing table then return. */
-    if((rtMsg->rtm_family != AF_INET) || (rtMsg->rtm_table != RT_TABLE_MAIN))
-        return ;
-
-    /* get the rtattr filed */
-    rtAttr = (struct rtattr *)RTM_RATA(rtMsg);
-    rtLen = RTM_PAYLOAD(nlHdr);
-
-    for(;RTA_OK(rtAttr,rtLen);rtAttr = RTA_NEXT(rtAttr,rtLen)){
-        switch(rtAttr->rta_type){
-        case RTA_OIF:
-            if_indextoname(*(int *)RTA_DATA(rtAttr), rtInfo->ifName);
-            break;
-
-        case RTA_GATEWAY:
-            memcpy(&rtInfo->gateWay, RTA_DATA(rtAttr), sizeof(rtInfo->gateWay));
-            break;
-
-        case RTA_PREFSRC:
-            memcpy(&rtInfo->srcAddr, RTA_DATA(rtAttr), sizeof(rtInfo->srcAddr));
-            break;
-
-        case RTA_DST:
-            memcpy(&rtInfo->dstAddr, RTA_DATA(rtAttr), sizeof(rtInfo->dstAddr));
-            break;
-        }
-
-    }
-
-    return;
-}
-
-int get_gatewayip(char *gatewayip, socklen_t size){
-    int found_gatewayip = 0;
-
-    struct nlmsghdr *nlMsg;
-    struct rtmsg * rtMSg;
-    struct route_info *rtInfo;
-
-    char msgBuf[BUFSIZE];
-    int sock, len, msgSeq = 0;
-
-    if((sock = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE)) < 0){
-        perror("Socket Creation: ");
-
-        return -1;
-    }
-
-    /* Initialize the buffer */
-    memset(msgBuf, 0, BUFSIZE);
-
-    /* point the header and the msg structure pointers into the buffer */
-    nlMsg = (struct nlmsgdhr *)msgBuf;
-    rtMsg = (struct rtmsg *)NLMSG_DATA(nlMsg);
-
-    /* Fill in the nlmsg header */
-    nlMsg->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg)); // Length of message.
-    nlMsg->nlmsg_type = RTM_GETROUTE; // Get the routes from kernel routing table .
-    nlMsg->nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST; // The message is a request for dump.
-    nlMsg->nlmsg_seq = msgSeq++; // Sequence of the message packet.
-    nlMsg->nlmsg_pid = getpid(); // PID of process sending the request.
-
-    /* Send the request */
-    if(send(sock, nlMsg, nlMsg->nlsmg_len, 0) < 0){
-        fprintf(stderr, "[-]Wrtie To Socket Failed...\n");
-
-        return -1;
-    }
-
-    /* Read the response */
-    if((len = readNlSock(sock, msgBuf, msgSeq, getpid())) < 0){
-        fprintf(stderr, "[-]Read From Socket Failed... \n");
-
-        return -1;
-    }
-
-    /* Parse and print the response */
-    rtInfo = (struct route_info *)malloc(sizeof(struct route_info));
-
-    for(;NLMSG_OK(nlMsg, len);nlMsg = NLMSG_NEXT(nlMsg, len)){
-        memset(rtInfo, 0, sizeof(struct route_info));
-        parseRoutes(nlMsg, rtInfo);
-
-        //Check if default gateway
-        if(strstr((char *) inet_ntoa(rtInfo->dstAddr), "0,0,0,0")){
-            //copy it over
-            inet_ntop(AF_INET, &rtInfo->gateWay, gatewayip, size);
-            found_gatewayip = 1;
-            break;
-        }
-    }
-
-    free(rtInfo);
-    close(sock);
-
-    return found_Gatewayip;
-}
