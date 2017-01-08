@@ -9,19 +9,44 @@
 #define ETHER_ADDR_LEN 6
 
 
-struct libnet_ethernet_hdr
+typedef struct libnet_ethernet_hdr
 {
 	u_int8_t  ether_dhost[ETHER_ADDR_LEN];/* destination ethernet address */
 	u_int8_t  ether_shost[ETHER_ADDR_LEN];/* source ethernet address */
 	u_int16_t ether_type;                 /* protocol */
-};
+}ETHER_HDR;
+
+#ifndef ETHERTYPE_PUP
+#define ETHERTYPE_PUP           0x0200  /* PUP protocol */
+#endif
+#ifndef ETHERTYPE_IP
+#define ETHERTYPE_IP            0x0800  /* IP protocol */
+#endif
+#ifndef ETHERTYPE_ARP
+#define ETHERTYPE_ARP           0x0806  /* addr. resolution protocol */
+#endif
+#ifndef ETHERTYPE_REVARP
+#define ETHERTYPE_REVARP        0x8035  /* reverse addr. resolution protocol */
+#endif
+#ifndef ETHERTYPE_VLAN
+#define ETHERTYPE_VLAN          0x8100  /* IEEE 802.1Q VLAN tagging */
+#endif
+#ifndef ETHERTYPE_EAP
+#define ETHERTYPE_EAP           0x888e  /* IEEE 802.1X EAP authentication */
+#endif
+#ifndef ETHERTYPE_MPLS
+#define ETHERTYPE_MPLS          0x8847  /* MPLS */
+#endif
+#ifndef ETHERTYPE_LOOPBACK
+#define ETHERTYPE_LOOPBACK      0x9000  /* used to test interfaces */
+#endif
 
 /*
 *  IPv4 header
 *  Internet Protocol, version 4
 *  Static header size: 20 bytes
 */
-struct libnet_ipv4_hdr
+typedef struct libnet_ipv4_hdr
 {
 #if (LIBNET_LIL_ENDIAN)
 	u_int8_t ip_hl : 4,      /* header length */
@@ -63,7 +88,7 @@ struct libnet_ipv4_hdr
 	u_int8_t ip_p;            /* protocol */
 	u_int16_t ip_sum;         /* checksum */
 	struct in_addr ip_src, ip_dst; /* source and dest address */
-};
+}IPv4_HDR;
 
 
 /*
@@ -71,7 +96,7 @@ struct libnet_ipv4_hdr
 *  Transmission Control Protocol
 *  Static header size: 20 bytes
 */
-struct libnet_tcp_hdr
+typedef struct libnet_tcp_hdr
 {
 	u_int16_t th_sport;       /* source port */
 	u_int16_t th_dport;       /* destination port */
@@ -113,4 +138,4 @@ struct libnet_tcp_hdr
 	u_int16_t th_win;         /* window */
 	u_int16_t th_sum;         /* checksum */
 	u_int16_t th_urp;         /* urgent pointer */
-};
+}TCP_HDR;
