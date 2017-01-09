@@ -3,6 +3,13 @@
 #include "hong8yung_netlib.h"
 
 #include <stdio.h>
+#include <signal.h>
+
+void func(int sig, pcap_t * cls_pDes)
+{
+	pcap_close(cls_pDes);
+	exit(1);
+}
 
 int main()
 {
@@ -78,6 +85,11 @@ int main()
 		printf("Destination IP : ");
 		print_IP(ntohl(*((ULONG*)&(ip_header->ip_dst))));
 
+		tcp_header = (TCP_HDR *)(pkt_data + sizeof(ETHER_HDR) + sizeof(IPv4_HDR));
+		printf("Source Port : %d\n", ntohs(*((unsigned short *)&(tcp_header->th_sport))));
+
+		printf("Destination Port : %d\n", ntohs(*((unsigned short *)&(tcp_header->th_dport))));
+		
 		for (int i = 0; i<38; i++) {    // print for header(HEX)
 			if (!(i % 8)) printf("\n");
 			printf("%02X ", *(pkt_data + i));
