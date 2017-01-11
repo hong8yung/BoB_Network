@@ -1,22 +1,20 @@
-#include <vector>
 #include <tins/tins.h>
+#include <iostream>
+#include <stddef.h>
 
 using namespace Tins;
 using namespace std;
 
-int main(){
-    vector<Packet> vt;
+size_t counter(0);
 
-    Sniffer sniffer("ens33");
-    while(vt.size() != 10){
-        vt.push_back(sniffer.next_packet());
-    }   // save ten packets
+bool count_packets(const PDU &){
+    counter++;
 
-    for (const auto& packet : vt){
-        if(packet.pdu()->find_pdu<IP>()){
-            cout << "At: " << packet.timestamp().seconds()
-                 << " - " << packet.pdu()->rfind_pdu<IP>().src_addr()
-                 << endl;
-        }
-    }
+    return true;
+}
+
+main(){
+    FileSniffer sniffer("/tmp/some_pcap_file.pcap");
+    sniffer.sniff_loop(count_packets);
+    cout << "There are " << counter << "packets in the pcap file" << endl;
 }
