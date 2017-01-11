@@ -5,27 +5,17 @@
 using namespace Tins;
 using namespace std;
 
-size_t counter(0);
-
-bool count_packets(const PDU &){
-    counter++;
-
-    return true;
-}
-
 main(){
-    //to resolve
-    IPv4Address to_resolve("192.168.231.2"); // gateway ip addr
-    NetworkInterface iface(to_resolve);
-    auto info = iface.addresses();
-    EthernetII eth = ARP::make_arp_request(to_resolve, info.ip_addr, info.hw_addr);
-
-    //the sender
     PacketSender sender;
-    unique_ptr<PDU> response(sender.send_recv(eth, iface));
+    IP pkt = IP("8.8.8.8") / UDP(53, 1337) / DNS();
+    pkt.rfind_pdu<DNS>().add_query({"www.google.com", DNS::A, DNS::IN});
+    pkt.rfind_pdu<DNS>().recursion_desired(1);
 
+    unique_ptr<PDU> response(sender.send_recv(pkt));
     if(response){
-        const ARP &arp = response->rfind_pdu<ARP>();
-        cout << "Hardware address: " << arp.sender_hw_addr() << endl;
+        DNS dns = response->rfind_pdu<RawPDU>().to<DNS>();
+        for(const auto &record : dns.answers()){
+            cout << record.dname() << " - " << record.data() << endl;
+        }
     }
 }
