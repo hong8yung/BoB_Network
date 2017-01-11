@@ -1,29 +1,22 @@
+#include <vector>
 #include <tins/tins.h>
 
 using namespace Tins;
+using namespace std;
 
-bool doo(PDU&){
-    return false;
+int main(){
+    vector<Packet> vt;
+
+    Sniffer sniffer("ens33");
+    while(vt.size() != 10){
+        vt.push_back(sniffer.next_packet());
+    }   // save ten packets
+
+    for (const auto& packet : vt){
+        if(packet.pdu()->find_pdu<IP>()){
+            cout << "At: " << packet.timestamp().seconds()
+                 << " - " << packet.pdu()->rfind_pdu<IP>().src_addr()
+                 << endl;
+        }
+    }
 }
-
-struct foo{
-    void bar(){
-        SnifferConfiguration config;
-        config.set_promisc_mode(true);
-        config.set_filter(("ip src 192.168.0.100"));
-        Sniffer sniffer("ens33", config);
-
-        sniffer.sniff_loop(make_sniffer_handler(this, &foo::handle));
-
-        sniffer.sniff_loop(doo);
-    }
-
-    bool handle(PDU&){
-        return false;
-    }
-};
-
-int main() {
-    foo f;
-    f.bar();
- }
