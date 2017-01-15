@@ -9,15 +9,51 @@
 #pragma comment(lib, "iphlpapi.lib")
 
 void print_IPinfo();
+void print_AdapterInfo();
 
 int main()
 {
 	
-
-	print_IPinfo();
+	print_AdapterInfo();
+	//print_IPinfo();
 	
 	return 0;
 }
+void print_AdapterInfo() {	
+	PIP_ADAPTER_INFO pAdapterInfo;
+	pAdapterInfo = (IP_ADAPTER_INFO *)malloc(sizeof(IP_ADAPTER_INFO));
+	
+	ULONG buflen = sizeof(IP_ADAPTER_INFO);
+	DWORD dwRetVal;
+
+	if (GetAdaptersInfo(pAdapterInfo, &buflen) == ERROR_BUFFER_OVERFLOW) {
+		free(pAdapterInfo);
+		pAdapterInfo = (IP_ADAPTER_INFO *)malloc(buflen);
+		if (pAdapterInfo == NULL)
+			printf("Error allocating memory needed to call GetAdaptersInfo\n");
+	}
+
+	if (dwRetVal = GetAdaptersInfo(pAdapterInfo, &buflen) != NO_ERROR) {
+		printf("GetAdaptersInfo failed with error %d\n", dwRetVal);
+		if (pAdapterInfo)
+			free(pAdapterInfo);
+	}
+
+	PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
+	while (pAdapter) {
+		printf("\tAdapter Name : \t%s\n", pAdapter->AdapterName);
+		printf("\tAdapter Desc : \t%s\n", pAdapter->Description);
+		printf("\tAdapter Addr : \t%s\n", pAdapter->Address);
+		printf("\IP Address : \t%s\n", pAdapter->IpAddressList.IpAddress.String);
+		printf("\tIP Mask : \t%s\n", pAdapter->IpAddressList.IpMask.String);
+		printf("\tGateway : \t%s\n", pAdapter->GatewayList.IpAddress.String);
+
+		pAdapter = pAdapter->Next;
+	}
+
+	if (pAdapterInfo) free(pAdapterInfo);
+}
+
 void print_IPinfo() {
 	// Declare a point 
 	FIXED_INFO *pFixedInfo;
@@ -50,12 +86,14 @@ void print_IPinfo() {
 	printf("\tDomain Name: %s\n", pFixedInfo->DomainName);
 	printf("\tDNS Servers:\n");
 	printf("\t\t%s\n", pFixedInfo->DnsServerList.IpAddress.String);
+	
 
 	pIPAddr = pFixedInfo->DnsServerList.Next;
 	while (pIPAddr) {
 		printf("\t\t%s\n", pIPAddr->IpAddress.String);
 		pIPAddr = pIPAddr->Next;
 	}
+
 
 	printf("\tNode Type: ");
 	switch (pFixedInfo->NodeType) {
