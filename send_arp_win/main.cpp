@@ -20,18 +20,28 @@ int main(int argc, char *argv[])
 	pcap_t* pDes = NULL;
 	ULONG victim_ip, attacker_ip, gateway_ip;
 	u_int8_t  victim_mac[ETHER_ADDR_LEN], attacker_mac[ETHER_ADDR_LEN];
-	char * spNetDevName = NULL;
+	char spNetDevName[100] ;
+
 	if (inet_pton(AF_INET, argv[1], &victim_ip) != 1) {	// victim ip addr String to ULONG
 		printf("[-] Invalid ip address\n");
-		exit(1);
+		//exit(1);
+		inet_pton(AF_INET, "255.255.255.255", &victim_ip);
 	}
+	victim_ip = ntohl(victim_ip);
+
 	pDes = connectIface(spNetDevName);	// Connect PCAP interface
 	
 	getAttackerInfo(&attacker_ip, &gateway_ip, attacker_mac, spNetDevName);
 
-	memcpy(victim_mac, getVictim_MAC(pDes, victim_ip), sizeof(victim_mac));	// get victim mac
-	
-	printf("sizeof victim_mac : %d\n", sizeof(victim_mac));
+	//memcpy(victim_mac, getVictim_MAC(pDes, victim_ip), sizeof(victim_mac));	// get victim mac
+
+	printf("=====Attacker=====\n");
+	print_IP(attacker_ip);
+	print_MAC(attacker_mac);
+
+	printf("=====Victim=====\n");
+	print_IP(victim_ip);
+	print_MAC(victim_mac);
 
 	//print_AdapterInfo();
 	//print_IPinfo();
@@ -63,108 +73,19 @@ void getAttackerInfo(ULONG* attacker_ip, ULONG* gateway_ip, u_int8_t* attacker_m
 
 	PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
 	while (pAdapter) {
-		if (strstr(spNetDevName, pAdapter->AdapterName)) {
+		if (strstr(spNetDevName, pAdapter->AdapterName)) {	// search seleted Device by name
 			inet_pton(AF_INET, pAdapter->IpAddressList.IpAddress.String, attacker_ip);
 			inet_pton(AF_INET, pAdapter->GatewayList.IpAddress.String, gateway_ip);
 			memcpy(attacker_mac, pAdapter->Address, 6);
-		}
-		
-		printf("\tAdapter Name : \t%s\n", pAdapter->AdapterName);
-		printf("\tAdapter Desc : \t%s\n", pAdapter->Description);
-		printf("\tAdapter Addr : \t%s\n", pAdapter->Address);
-		printf("\tIP Address : \t%s\n", pAdapter->IpAddressList.IpAddress.String);
-		printf("\tIP Mask : \t%s\n", pAdapter->IpAddressList.IpMask.String);
-		print_MAC((uint8_t *)(pAdapter->Address));
-		printf("\tGateway : \t%s\n", pAdapter->GatewayList.IpAddress.String);
-		
 
+			*attacker_ip = ntohl(*attacker_ip);
+			*gateway_ip = ntohl(*gateway_ip);
+			break;
+		}
 		pAdapter = pAdapter->Next;
 	}
 
 	if (pAdapterInfo) free(pAdapterInfo);
-}
-
-void print_IPinfo() {
-	// Declare a point 
-	FIXED_INFO *pFixedInfo;
-	IP_ADDR_STRING *pIPAddr;
-
-	ULONG ulOutBufLen;
-	DWORD dwRetVal;
-
-	// Allocate memory for the structures
-	pFixedInfo = (FIXED_INFO *)malloc(sizeof(FIXED_INFO));
-	ulOutBufLen = sizeof(FIXED_INFO);
-
-	// to get size requeired for the OutBufLen 
-	if (GetNetworkParams(pFixedInfo, &ulOutBufLen) == ERROR_BUFFER_OVERFLOW) {
-		free(pFixedInfo);
-		pFixedInfo = (FIXED_INFO *)malloc(ulOutBufLen);
-		if (pFixedInfo == NULL) 
-			printf("Error allocating memory needed to call GetNetworkParams\n");
-	}
-
-	// using general error checking
-	if (dwRetVal = GetNetworkParams(pFixedInfo, &ulOutBufLen) != NO_ERROR) {
-		printf("GetNetworkParams failed with error %d\n", dwRetVal);
-		if (pFixedInfo) 
-			free(pFixedInfo);
-	}
-
-	// case by successful
-	printf("\tHost Name: %s\n", pFixedInfo->HostName);
-	printf("\tDomain Name: %s\n", pFixedInfo->DomainName);
-	printf("\tDNS Servers:\n");
-	printf("\t\t%s\n", pFixedInfo->DnsServerList.IpAddress.String);
-	
-
-	pIPAddr = pFixedInfo->DnsServerList.Next;
-	while (pIPAddr) {
-		printf("\t\t%s\n", pIPAddr->IpAddress.String);
-		pIPAddr = pIPAddr->Next;
-	}
-
-
-	printf("\tNode Type: ");
-	switch (pFixedInfo->NodeType) {
-	case 1:
-		printf("%s\n", "Broadcast");
-		break;
-	case 2:
-		printf("%s\n", "Peer to peer");
-		break;
-	case 4:
-		printf("%s\n", "Mixed");
-		break;
-	case 8:
-		printf("%s\n", "Hybrid");
-		break;
-	default:
-		printf("\n");
-	}
-
-	printf("\tNetBIOS Scope ID: %s\n", pFixedInfo->ScopeId);
-
-	if (pFixedInfo->EnableRouting)
-		printf("\tIP Routing Enabled: Yes\n");
-	else
-		printf("\tIP Routing Enabled: No\n");
-
-	if (pFixedInfo->EnableProxy)
-		printf("\tWINS Proxy Enabled: Yes\n");
-	else
-		printf("\tWINS Proxy Enabled: No\n");
-
-	if (pFixedInfo->EnableDns)
-		printf("\tNetBIOS Resolution Uses DNS: Yes\n");
-	else
-		printf("\tNetBIOS Resolution Uses DNS: No\n");
-
-	// Free memory
-	if (pFixedInfo) {
-		free(pFixedInfo);
-		pFixedInfo = NULL;
-	}
 }
 
 pcap_t* connectIface(char * spNetDevName) {
@@ -180,9 +101,6 @@ pcap_t* connectIface(char * spNetDevName) {
 	ETHER_HDR *ether_header;
 	IPv4_HDR *ip_header;
 	TCP_HDR *tcp_header;
-
-	void print_IP(unsigned long ip);
-	void print_MAC(UCHAR * mac);
 
 	// Retrieve the device list from the local machine
 	if (pcap_findalldevs_ex(PCAP_SRC_IF_STRING, NULL, &alldevs, errbuf) == -1) {
@@ -205,8 +123,8 @@ pcap_t* connectIface(char * spNetDevName) {
 	scanf_s("%d", &inum);
 	for (d = alldevs, i = 0; i<inum - 1; d = d->next, i++); // jump to the i-th dev
 
-	spNetDevName = d->name;
-
+	memset(spNetDevName, 0, 100);
+	memcpy(spNetDevName, d->name, strlen(d->name));
 	if (pcap_lookupnet(spNetDevName, &net, &mask, errbuf) == -1) {
 		fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
 		net = 0;
