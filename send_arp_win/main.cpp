@@ -12,7 +12,7 @@
 void print_MAC(u_int8_t * mac);
 void print_IP(unsigned long ip);
 void getAttackerInfo(ULONG* attacker_ip, ULONG* gateway_ip, u_int8_t* attacker_mac, char* spNetDevName);
-u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip);
+u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8_t* attacker_mac);
 pcap_t* connectIface(char * spNetDevName);
 
 int main(int argc, char *argv[])
@@ -25,7 +25,7 @@ int main(int argc, char *argv[])
 	if (inet_pton(AF_INET, argv[1], &victim_ip) != 1) {	// victim ip addr String to ULONG
 		printf("[-] Invalid ip address\n");
 		//exit(1);
-		inet_pton(AF_INET, "255.255.255.255", &victim_ip);
+		inet_pton(AF_INET, "172.30.1.47", &victim_ip);
 	}
 	victim_ip = ntohl(victim_ip);
 
@@ -33,7 +33,7 @@ int main(int argc, char *argv[])
 	
 	getAttackerInfo(&attacker_ip, &gateway_ip, attacker_mac, spNetDevName);
 
-	//memcpy(victim_mac, getVictim_MAC(pDes, victim_ip), sizeof(victim_mac));	// get victim mac
+	memcpy(victim_mac, getVictim_MAC(pDes, victim_ip, attacker_ip, attacker_mac), ETHER_ADDR_LEN);	// get victim mac
 
 	printf("=====Attacker=====\n");
 	print_IP(attacker_ip);
@@ -143,13 +143,67 @@ pcap_t* connectIface(char * spNetDevName) {
 	return pDes;
 }
 
-
-u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip) {
+u_int8_t* getVictim_MAC(pcap_t* pDes, ULONG victim_ip, ULONG attacker_ip, u_int8_t* attacker_mac) {
 	ETHER_HDR ehp;
 	ARP_HDR ahp;
+	UCHAR packetbuf[1500];
+
+	int res;
+	struct pcap_pkthdr *header;
 
 	memset(ehp.ether_dhost, 0xff, ETHER_ADDR_LEN);	// set broadcast
-	//memset()
+	memcpy(ehp.ether_shost, attacker_mac, ETHER_ADDR_LEN);
+	ehp.ether_type = htons(ETHERTYPE_ARP);
+
+	ahp.ar_hrd = htons(ARPHRD_ETHER);	// mac type
+	ahp.ar_pro = htons(ETHERTYPE_IP);	// protocol type
+	ahp.ar_hln = ETHER_ADDR_LEN;	// hadware size
+	ahp.ar_pln = 4;	//protocol size
+	ahp.ar_op = htons(ARPOP_REQUEST);	// opcode (request = 1)
+
+	memset(packetbuf, 0x00, 1500);	// clear packet buffer
+
+	memcpy(packetbuf, &ehp, sizeof(ETHER_HDR));
+	memcpy(packetbuf + sizeof(ETHER_HDR), &ahp, sizeof(ARP_HDR));
+
+	int temp_cnt = sizeof(ETHER_HDR)+sizeof(ARP_HDR);
+	
+	memcpy(packetbuf + temp_cnt, attacker_mac, ETHER_ADDR_LEN);
+	temp_cnt += ETHER_ADDR_LEN;
+
+	*(ULONG *)(packetbuf + temp_cnt) = htonl(attacker_ip);
+	temp_cnt += sizeof(attacker_ip);
+
+	memset(packetbuf + temp_cnt, 0x00, ETHER_ADDR_LEN);
+	temp_cnt += ETHER_ADDR_LEN;
+
+	*(ULONG *)(packetbuf + temp_cnt) = htonl(victim_ip);
+
+	if (pcap_sendpacket(pDes, packetbuf, sizeof(ETHER_HDR) + sizeof(ARP_HDR) + temp_cnt) != 0) {
+		printf("[-] Error sending the ARPpacket to victim\n");
+		return 0;
+	}
+
+	printf("send ok\n");
+
+	//memset(packetbuf, 0x00, 1500);	// clear packet buffer
+	const unsigned char * pkt_data;
+	while ((res = pcap_next_ex(pDes, &header, &pkt_data)) >= 0) {
+		if (res == 0) continue;
+
+		ETHER_HDR *ch_ehp = (ETHER_HDR *)pkt_data;
+		if (ntohs(ch_ehp->ether_type) != ETHERTYPE_ARP) continue;
+		else {
+			
+			ARP_HDR * ch_ahp = (ARP_HDR *)(pkt_data + sizeof(ETHER_HDR));
+			if (ntohs(ch_ahp->ar_op) == ARPOP_REPLY) {
+				UCHAR* tmpp = (UCHAR*)ch_ahp + sizeof(ARP_HDR);
+				if (ntohl(*(ULONG *)(tmpp+ ETHER_ADDR_LEN)) == victim_ip) {
+					return tmpp;
+				}
+			}
+		}
+	}
 	return 0;
 	//pcap_sendpacket(pDes,,)
 }
