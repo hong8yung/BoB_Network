@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -6,8 +5,32 @@
 #include <linux/types.h>
 #include <linux/netfilter.h>		/* for NF_ACCEPT */
 #include <errno.h>
-
 #include <libnetfilter_queue/libnetfilter_queue.h>
+
+#include <tins/tins.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+
+using namespace Tins;
+using namespace std;
+
+bool chk_url(unsigned char * buf){
+    struct iphdr * ip_info = (struct iphdr *)buf;
+    if(!ip_info) return false;
+
+    struct tcphdr * tcp_info = (struct tcphdr *)(buf + sizeof(*ip_info));
+    if(!tcp_info) return false;
+
+    unsigned char * http_info = buf + sizeof(*ip_info) + sizeof(*tcp_info);
+    if(!http_info) return false;
+    //check err point addr
+
+    //if(tcp_info->dest !=80) return false;   //
+    char *tmp_url = "Host: www.sex.com";
+    char * p = strstr((char *)http_info, (const char *)tmp_url);
+    if(p)   return true;
+    else return false;
+}
 
 void hexdump(unsigned char * buf, int size){
     int i;
@@ -73,13 +96,29 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     return id;
 }
 
-
+/*
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
           struct nfq_data *nfa, void *data)
 {
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
     return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+}
+*/
+
+static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
+          struct nfq_data *nfa, void *data)
+{
+    u_int32_t id = print_pkt(nfa);
+    printf("entering callback\n");
+
+    nfq_get_payload(nfa, (unsigned char **)&data);
+    if(chk_url((unsigned char *)data)){
+        cout << "SUCCESS BLOCK!!" << endl;
+        return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+    }else{
+        return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+    }
 }
 
 int main(int argc, char **argv)
