@@ -14,6 +14,25 @@
 using namespace std;
 using namespace Tins;
 
+bool chk_url(unsigned char * buf){
+    struct iphdr * ip_info = (struct iphdr *)buf;
+    if(!ip_info) return false;
+
+    struct tcphdr * tcp_info = (struct tcphdr *)(buf + sizeof(*ip_info));
+    if(!tcp_info) return false;
+
+    unsigned char * http_info = buf + sizeof(*ip_info) + sizeof(*tcp_info);
+    if(!http_info) return false;
+    //check err point addr
+
+    //if(tcp_info->dest !=80) return false;   //
+    char *tmp_url = "Host: www.sex.com";
+    char * p = strstr((char *)http_info, (const char *)tmp_url);
+
+    if(p)   return true;
+    else return false;
+}
+
 void print_IP(unsigned long ip){
     for(int i=0; i<4; i++){
         printf("%d",*((unsigned char*)(&ip)+(3-i)));
@@ -28,20 +47,6 @@ void hexdump(unsigned char * buf, int size){
         if(i%16==0) printf("\n");
         printf("%02X ", buf[i]);
     }
-}
-
-void chk_http(unsigned char * buf, int size){
-    //int i;
-    //const PDU &pdu_pkt = (PDU &)buf;
-    std::cout << "hi!!" << std::endl;
-    iphdr * ip = (iphdr *)buf;
-    const IP &ip_pkt = (IP &)buf;
-    //const IP &ip_pkt = pdu_pkt.rfind_pdu<IP>();
-
-
-    print_IP(ntohl(ip->saddr));
-    print_IP(ntohl(ip->daddr));
-
 }
 
 /* returns packet id */
@@ -94,7 +99,6 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     if (ret >= 0){
         printf("payload_len=%d ", ret);
         hexdump(data, ret);
-        chk_http(data, ret);
     }
     fputc('\n', stdout);
 
@@ -107,7 +111,10 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 {
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
-    return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+    nfq_get_payload(nfa, (unsigned char **)&data);
+
+    if(chk_url((unsigned char*)data))    return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+    else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
 int main(int argc, char **argv)
@@ -190,7 +197,7 @@ int main(int argc, char **argv)
     exit(0);
 }
 
-
+/*
 int main(int argc, char *argv[])
 {
 
@@ -218,4 +225,4 @@ int main(int argc, char *argv[])
         }
     }
     return 0;
-}
+}*/
