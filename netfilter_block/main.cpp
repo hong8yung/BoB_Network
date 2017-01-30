@@ -6,8 +6,22 @@
 #include <linux/types.h>
 #include <linux/netfilter.h>		/* for NF_ACCEPT */
 #include <errno.h>
-
+#include <tins/tins.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
+
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+
+
+using namespace Tins;
+
+void print_IP(unsigned long ip){
+    for(int i=0; i<4; i++){
+        printf("%d",*((unsigned char*)(&ip)+(3-i)));
+        if(3!=i) printf(".");
+        else printf("\n");
+    }
+}
 
 void hexdump(unsigned char * buf, int size){
     int i;
@@ -15,6 +29,19 @@ void hexdump(unsigned char * buf, int size){
         if(i%16==0) printf("\n");
         printf("%02X ", buf[i]);
     }
+}
+
+void chk_http(unsigned char * buf, int size){
+    //int i;
+    //const PDU &pdu_pkt = (PDU &)buf;
+    std::cout << "hi!!" << std::endl;
+    iphdr * ip = (iphdr *)buf;
+    const IP &ip_pkt = (IP &)buf;
+    //const IP &ip_pkt = pdu_pkt.rfind_pdu<IP>();
+
+    print_IP(ntohl(ip->saddr));
+    print_IP(ntohl(ip->daddr));
+
 }
 
 /* returns packet id */
@@ -67,6 +94,7 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     if (ret >= 0){
         printf("payload_len=%d ", ret);
         hexdump(data, ret);
+        chk_http(data, ret);
     }
     fputc('\n', stdout);
 
