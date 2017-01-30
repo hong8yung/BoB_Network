@@ -60,6 +60,7 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     unsigned char *data;
 
     ph = nfq_get_msg_packet_hdr(tb);
+
     if (ph) {
         id = ntohl(ph->packet_id);
         printf("hw_protocol=0x%04x hook=%u id=%u ",
@@ -77,28 +78,16 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     }
 
     mark = nfq_get_nfmark(tb);
-    if (mark)
-        printf("mark=%u ", mark);
+
 
     ifi = nfq_get_indev(tb);
-    if (ifi)
-        printf("indev=%u ", ifi);
 
     ifi = nfq_get_outdev(tb);
-    if (ifi)
-        printf("outdev=%u ", ifi);
     ifi = nfq_get_physindev(tb);
-    if (ifi)
-        printf("physindev=%u ", ifi);
-
     ifi = nfq_get_physoutdev(tb);
-    if (ifi)
-        printf("physoutdev=%u ", ifi);
 
     ret = nfq_get_payload(tb, &data);
     if (ret >= 0){
-        printf("payload_len=%d ", ret);
-        hexdump(data, ret);
     }
     fputc('\n', stdout);
 
@@ -111,9 +100,16 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 {
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
-    nfq_get_payload(nfa, (unsigned char **)&data);
+    int ret = nfq_get_payload(nfa, (unsigned char **)&data);
 
-    if(chk_url((unsigned char*)data))    return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+    if(chk_url((unsigned char*)data))    {
+        Pv4Address proxy_server_addr("192.168.231.143");
+
+        unsigned adr = (uint32_t(proxy_server_addr));
+        memcpy((unsigned char *)data + 16, &adr, 4);
+        //hexdump((unsigned char *)data, ret);
+        return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
+    }
     else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
