@@ -10,6 +10,7 @@
 
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 
 using namespace std;
 using namespace Tins;
@@ -101,14 +102,30 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
     int ret = nfq_get_payload(nfa, (unsigned char **)&data);
-
     if(chk_url((unsigned char*)data))    {
-        Pv4Address proxy_server_addr("192.168.231.143");
+        struct iphdr fake_iphdr;
+        struct udphdr fake_udphdr;
+        memcpy(&fake_iphdr, (unsigned char *)data,sizeof(fake_iphdr));
 
-        unsigned adr = (uint32_t(proxy_server_addr));
-        memcpy((unsigned char *)data + 16, &adr, 4);
+        IPv4Address proxy_server_addr("121.186.5.123");
+        uint16_t proxy_dport = 28888;
+
+        fake_iphdr.daddr = uint32_t(proxy_server_addr);
+        fake_udphdr.uh_sport = htons(28888);
+        fake_udphdr.uh_dport = htons(proxy_dport);
+        fake_iphdr.protocol = 17;
+        fake_udphdr.len = ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+
+        memcpy((unsigned char *)data +sizeof(fake_iphdr)+sizeof(fake_udphdr), data, sizeof(fake_iphdr)+sizeof(fake_udphdr));    // backup
+
+
+        memcpy((unsigned char *)data, &fake_iphdr, sizeof(fake_iphdr));
+        memcpy((unsigned char *)data+sizeof(fake_iphdr), &fake_udphdr, sizeof(fake_udphdr));
+
+        hexdump((unsigned char *)data, ret);
+        cout << "dport :: " << fake_udphdr.uh_dport << endl;
         //hexdump((unsigned char *)data, ret);
-        return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
+        return nfq_set_verdict(qh, id, NF_ACCEPT, ret+sizeof(fake_iphdr)+sizeof(fake_udphdr), (const unsigned char *)data);
     }
     else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
