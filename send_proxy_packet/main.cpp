@@ -34,6 +34,18 @@ bool chk_url(unsigned char * buf){
     else return false;
 }
 
+bool chk_mypacket(unsigned char * buf){
+    struct iphdr * ip_info = (struct iphdr *)buf;
+    if(!ip_info) return false;
+
+    struct udphdr * udp_info = (struct udphdr *)(buf + sizeof(*ip_info));
+    if(!udp_info) return false;
+
+    if(ntohs(udp_info->uh_dport)==28888) return true;
+    else return false;
+    //check err point addr
+}
+
 void print_IP(unsigned long ip){
     for(int i=0; i<4; i++){
         printf("%d",*((unsigned char*)(&ip)+(3-i)));
@@ -95,6 +107,42 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     return id;
 }
 
+int enpack_udp(IPv4Address ipdadr, uint16_t udpt, void* data, int ret){
+    struct iphdr fake_iphdr;
+    struct udphdr fake_udphdr;
+    memcpy(&fake_iphdr, (unsigned char *)data,sizeof(fake_iphdr));  // !!! need except try ip header len != 40?
+
+
+    fake_iphdr.daddr = uint32_t(ipdadr);
+    fake_udphdr.uh_sport = htons(28888);
+    fake_udphdr.uh_dport = htons(udpt);
+    fake_iphdr.protocol = 17;
+    fake_udphdr.len = ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+
+    memcpy((unsigned char *)data +sizeof(fake_iphdr)+sizeof(fake_udphdr), data, sizeof(fake_iphdr)+sizeof(fake_udphdr));    // backup
+
+
+    memcpy((unsigned char *)data, &fake_iphdr, sizeof(fake_iphdr));
+    memcpy((unsigned char *)data+sizeof(fake_iphdr), &fake_udphdr, sizeof(fake_udphdr));
+
+    hexdump((unsigned char *)data, ret);
+    cout << "dport :: " << fake_udphdr.uh_dport << endl;
+    //hexdump((unsigned char *)data, ret);
+
+    return ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+}
+
+int depack_udp(void* data, int ret){
+    struct iphdr *fake_iphdr;
+    struct udphdr fake_udphdr;
+    int fake_hdl, real_pacl;
+
+    fake_hdl = (fake_iphdr->ihl)+sizeof(fake_udphdr);
+    real_pacl = ret-fake_hdl;
+
+    memcpy((unsigned char *)data, (unsigned char *)data+fake_hdl, real_pacl);
+    return real_pacl;
+}
 
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
           struct nfq_data *nfa, void *data)
@@ -103,32 +151,32 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     printf("entering callback\n");
     int ret = nfq_get_payload(nfa, (unsigned char **)&data);
     if(chk_url((unsigned char*)data))    {
-        struct iphdr fake_iphdr;
-        struct udphdr fake_udphdr;
-        memcpy(&fake_iphdr, (unsigned char *)data,sizeof(fake_iphdr));
-
-        IPv4Address proxy_server_addr("121.186.5.123");
+        //IPv4Address proxy_server_addr("121.186.5.123");
+        IPv4Address proxy_server_addr("192.168.231.146");
         uint16_t proxy_dport = 28888;
 
-        fake_iphdr.daddr = uint32_t(proxy_server_addr);
-        fake_udphdr.uh_sport = htons(28888);
-        fake_udphdr.uh_dport = htons(proxy_dport);
-        fake_iphdr.protocol = 17;
-        fake_udphdr.len = ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+        ret = enpack_udp(proxy_server_addr, proxy_dport, data, ret);
 
-        memcpy((unsigned char *)data +sizeof(fake_iphdr)+sizeof(fake_udphdr), data, sizeof(fake_iphdr)+sizeof(fake_udphdr));    // backup
-
-
-        memcpy((unsigned char *)data, &fake_iphdr, sizeof(fake_iphdr));
-        memcpy((unsigned char *)data+sizeof(fake_iphdr), &fake_udphdr, sizeof(fake_udphdr));
-
-        hexdump((unsigned char *)data, ret);
-        cout << "dport :: " << fake_udphdr.uh_dport << endl;
-        //hexdump((unsigned char *)data, ret);
-        return nfq_set_verdict(qh, id, NF_ACCEPT, ret+sizeof(fake_iphdr)+sizeof(fake_udphdr), (const unsigned char *)data);
+        return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
     }
     else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
+
+static int cb2(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
+          struct nfq_data *nfa, void *data)
+{
+    u_int32_t id = print_pkt(nfa);
+    printf("entering callback\n");
+    int ret = nfq_get_payload(nfa, (unsigned char **)&data);
+    if(chk_mypacket((unsigned char*)data))    {
+
+        ret = depack_udp(data, ret);
+
+        return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
+    }
+    else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+}
+
 
 int main(int argc, char **argv)
 {
@@ -159,7 +207,12 @@ int main(int argc, char **argv)
     }
 
     printf("binding this socket to queue '0'\n");
-    qh = nfq_create_queue(h,  0, &cb, NULL);
+
+    if(argv[1]){ // server
+        qh = nfq_create_queue(h,  0, &cb2, NULL);
+    } else {    // client
+        qh = nfq_create_queue(h,  0, &cb, NULL);
+    }
     if (!qh) {
         fprintf(stderr, "error during nfq_create_queue()\n");
         exit(1);
