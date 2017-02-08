@@ -41,9 +41,9 @@ bool chk_mypacket(unsigned char * buf){
     struct udphdr * udp_info = (struct udphdr *)(buf + sizeof(*ip_info));
     if(!udp_info) return false;
 
+    cout << "\t port number : " << ntohs(udp_info->uh_dport)<< endl;;
     if(ntohs(udp_info->uh_dport)==28888) return true;
     else return false;
-    //check err point addr
 }
 
 void print_IP(unsigned long ip){
@@ -141,6 +141,8 @@ int depack_udp(void* data, int ret){
     real_pacl = ret-fake_hdl;
 
     memcpy((unsigned char *)data, (unsigned char *)data+fake_hdl, real_pacl);
+    hexdump((unsigned char *)data, real_pacl);
+
     return real_pacl;
 }
 
@@ -209,6 +211,7 @@ int main(int argc, char **argv)
     printf("binding this socket to queue '0'\n");
 
     if(argv[1]){ // server
+        cout << "server start ! " << endl;
         qh = nfq_create_queue(h,  0, &cb2, NULL);
     } else {    // client
         qh = nfq_create_queue(h,  0, &cb, NULL);
