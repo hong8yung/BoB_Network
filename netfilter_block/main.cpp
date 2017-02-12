@@ -5,49 +5,58 @@
 #include <linux/types.h>
 #include <linux/netfilter.h>		/* for NF_ACCEPT */
 #include <errno.h>
-<<<<<<< HEAD
 #include <tins/tins.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-
-
-using namespace Tins;
-
-void print_IP(unsigned long ip){
-    for(int i=0; i<4; i++){
-        printf("%d",*((unsigned char*)(&ip)+(3-i)));
-        if(3!=i) printf(".");
-        else printf("\n");
-    }
-=======
-#include <libnetfilter_queue/libnetfilter_queue.h>
-
-#include <tins/tins.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 
 using namespace Tins;
 using namespace std;
 
+char* my_strstr(const char *in, const char *str, unsigned int size)
+{
+    char c;
+    size_t len;
+
+    c = *str++;
+    if (!c)
+        return (char *) in;	// Trivial empty string case
+
+    len = strlen(str);
+    //len = size;
+    do {
+        char sc;
+
+        do {
+            size--;
+            sc = *in++;
+            if (!sc || !size)   // size check
+                return (char *) 0;
+        } while (sc != c);
+    } while (strncmp(in, str, len) != 0);
+
+    return (char *) (in - 1);
+}
+
 bool chk_url(unsigned char * buf){
     struct iphdr * ip_info = (struct iphdr *)buf;
     if(!ip_info) return false;
+    else if(ip_info->protocol != IPPROTO_TCP) return false;
 
     struct tcphdr * tcp_info = (struct tcphdr *)(buf + sizeof(*ip_info));
     if(!tcp_info) return false;
 
     unsigned char * http_info = buf + sizeof(*ip_info) + sizeof(*tcp_info);
     if(!http_info) return false;
+    //else if(tcp_info->dest != 80) return false;   //
     //check err point addr
 
-    //if(tcp_info->dest !=80) return false;   //
     char *tmp_url = "Host: www.sex.com";
-    char * p = strstr((char *)http_info, (const char *)tmp_url);
+    char * p = my_strstr((char *)http_info, (const char *)tmp_url, 200);
+
     if(p)   return true;
     else return false;
->>>>>>> 66de114805f70e018157a8b2e0e5f7906fc7f305
 }
 
 void hexdump(unsigned char * buf, int size){
@@ -56,19 +65,6 @@ void hexdump(unsigned char * buf, int size){
         if(i%16==0) printf("\n");
         printf("%02X ", buf[i]);
     }
-}
-
-void chk_http(unsigned char * buf, int size){
-    //int i;
-    //const PDU &pdu_pkt = (PDU &)buf;
-    std::cout << "hi!!" << std::endl;
-    iphdr * ip = (iphdr *)buf;
-    const IP &ip_pkt = (IP &)buf;
-    //const IP &ip_pkt = pdu_pkt.rfind_pdu<IP>();
-
-    print_IP(ntohl(ip->saddr));
-    print_IP(ntohl(ip->daddr));
-
 }
 
 /* returns packet id */
@@ -120,33 +116,22 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     ret = nfq_get_payload(tb, &data);
     if (ret >= 0){
         printf("payload_len=%d ", ret);
-        hexdump(data, ret);
-        chk_http(data, ret);
     }
     fputc('\n', stdout);
 
     return id;
 }
 
-/*
-static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
-          struct nfq_data *nfa, void *data)
-{
-    u_int32_t id = print_pkt(nfa);
-    printf("entering callback\n");
-    return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
-}
-*/
-
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
           struct nfq_data *nfa, void *data)
 {
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
 
-    nfq_get_payload(nfa, (unsigned char **)&data);
+    int ret = nfq_get_payload(nfa, (unsigned char **)&data);
     if(chk_url((unsigned char *)data)){
         cout << "SUCCESS BLOCK!!" << endl;
+        hexdump((unsigned char * )data, ret);
         return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
     }else{
         return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
