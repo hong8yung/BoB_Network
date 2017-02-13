@@ -15,6 +15,14 @@
 using namespace std;
 using namespace Tins;
 
+void hexdump(unsigned char * buf, int size){
+    int i;
+    for(i=0; i<size; i++){
+        if(i%16==0) printf("\n");
+        printf("%02X ", buf[i]);
+    }
+}
+
 bool chk_url(unsigned char * buf){
     struct iphdr * ip_info = (struct iphdr *)buf;
     if(!ip_info) return false;
@@ -41,8 +49,12 @@ bool chk_mypacket(unsigned char * buf){
     struct udphdr * udp_info = (struct udphdr *)(buf + sizeof(*ip_info));
     if(!udp_info) return false;
 
-    cout << "\t port number : " << ntohs(udp_info->uh_dport)<< endl;;
-    if(ntohs(udp_info->uh_dport)==28888) return true;
+    hexdump((unsigned char *)udp_info, sizeof(*udp_info));
+    cout << "\t port number : " << udp_info->uh_dport<< endl;
+    cout << "\t port number : " << ntohs(udp_info->uh_dport)<< endl;
+
+    if(udp_info->uh_dport==28888) return true;
+
     else return false;
 }
 
@@ -54,13 +66,7 @@ void print_IP(unsigned long ip){
     }
 }
 
-void hexdump(unsigned char * buf, int size){
-    int i;
-    for(i=0; i<size; i++){
-        if(i%16==0) printf("\n");
-        printf("%02X ", buf[i]);
-    }
-}
+
 
 /* returns packet id */
 static u_int32_t print_pkt (struct nfq_data *tb)
@@ -117,7 +123,7 @@ int enpack_udp(IPv4Address ipdadr, uint16_t udpt, void* data, int ret){
     fake_udphdr.uh_sport = htons(28888);
     fake_udphdr.uh_dport = htons(udpt);
     fake_iphdr.protocol = 17;
-    fake_udphdr.len = ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+    fake_udphdr.len = htons(ret+sizeof(fake_iphdr)+sizeof(fake_udphdr));
 
     memcpy((unsigned char *)data +sizeof(fake_iphdr)+sizeof(fake_udphdr), data, sizeof(fake_iphdr)+sizeof(fake_udphdr));    // backup
 
@@ -126,7 +132,7 @@ int enpack_udp(IPv4Address ipdadr, uint16_t udpt, void* data, int ret){
     memcpy((unsigned char *)data+sizeof(fake_iphdr), &fake_udphdr, sizeof(fake_udphdr));
 
     hexdump((unsigned char *)data, ret);
-    cout << "dport :: " << fake_udphdr.uh_dport << endl;
+    cout << endl <<"dport :: " << ntohs(fake_udphdr.uh_dport) << endl;
     //hexdump((unsigned char *)data, ret);
 
     return ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
@@ -153,9 +159,9 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     printf("entering callback\n");
     int ret = nfq_get_payload(nfa, (unsigned char **)&data);
     if(chk_url((unsigned char*)data))    {
-        //IPv4Address proxy_server_addr("121.186.5.123");
-        IPv4Address proxy_server_addr("192.168.231.146");
-        uint16_t proxy_dport = 28888;
+        IPv4Address proxy_server_addr("121.186.5.123");
+        //IPv4Address proxy_server_addr("192.168.231.146");
+        uint16_t proxy_dport = 17777;
 
         ret = enpack_udp(proxy_server_addr, proxy_dport, data, ret);
 
