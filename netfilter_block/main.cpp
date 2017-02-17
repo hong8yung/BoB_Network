@@ -44,10 +44,12 @@ bool chk_url(unsigned char * buf){
     if(!ip_info) return false;
     else if(ip_info->protocol != IPPROTO_TCP) return false;
 
-    struct tcphdr * tcp_info = (struct tcphdr *)(buf + sizeof(*ip_info));
+    uint32_t iphl = (ip_info->ihl)*4;
+    struct tcphdr * tcp_info = (struct tcphdr *)(buf + iphl);
     if(!tcp_info) return false;
 
-    unsigned char * http_info = buf + sizeof(*ip_info) + sizeof(*tcp_info);
+    uint32_t tcphl = (tcp_info->doff)*4;
+    unsigned char * http_info = buf + iphl + tcphl;
     if(!http_info) return false;
     //else if(tcp_info->dest != 80) return false;   //
     //check err point addr
