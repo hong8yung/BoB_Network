@@ -113,29 +113,37 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     return id;
 }
 
-int enpack_udp(IPv4Address ipdadr, uint16_t udpt, void* data, int ret){
-    struct iphdr fake_iphdr;
-    struct udphdr fake_udphdr;
-    memcpy(&fake_iphdr, (unsigned char *)data,sizeof(fake_iphdr));  // !!! need except try ip header len != 40?
+int enpack_tcp(IPv4Address ipdadr, uint16_t utcp, void* data, int ret){
+    struct iphdr fake_iphdr, *p_iphdr;
+    struct tcphdr fake_tcphdr, *p_tcphdr;
+    int fake_hdl, real_pacl;
+
+    p_iphdr = (iphdr *)data;
+    memcpy(&fake_iphdr, (unsigned char *)data,(p_iphdr->ihl)*4);  // !!! need except try ip header len != 40?
+
+    p_tcphdr = (tcphdr *)(data+(p_iphdr->ihl)*4);
+    memcpy(&fake_tcphdr, (unsigned char *)data+(p_iphdr->ihl)*4,(p_tcphdr->doff)*4);
 
 
     fake_iphdr.daddr = uint32_t(ipdadr);
-    fake_udphdr.uh_sport = htons(28888);
-    fake_udphdr.uh_dport = htons(udpt);
-    fake_iphdr.protocol = 17;
-    fake_udphdr.len = htons(ret+sizeof(fake_iphdr)+sizeof(fake_udphdr));
+    fake_iphdr.protocol = IPPROTO_TCP;
 
-    memcpy((unsigned char *)data +sizeof(fake_iphdr)+sizeof(fake_udphdr), data, sizeof(fake_iphdr)+sizeof(fake_udphdr));    // backup
+    fake_tcphdr.source = htons(28888);
+    fake_tcphdr.dest = htons(utcp);
+
+    fake_hdl = (p_iphdr->ihl)*4+(p_tcphdr->doff)*4;
+    real_pacl = ret+fake_hdl;
+
+    memcpy((unsigned char *)data +fake_hdl, data, ret);    // backup
 
 
-    memcpy((unsigned char *)data, &fake_iphdr, sizeof(fake_iphdr));
-    memcpy((unsigned char *)data+sizeof(fake_iphdr), &fake_udphdr, sizeof(fake_udphdr));
+    memcpy((unsigned char *)data, &fake_iphdr, (fake_iphdr.ihl)*4);
+    memcpy((unsigned char *)data+(fake_iphdr.ihl)*4, &fake_tcphdr, (fake_tcphdr.doff)*4);
 
     hexdump((unsigned char *)data, ret);
-    cout << endl <<"dport :: " << ntohs(fake_udphdr.uh_dport) << endl;
     //hexdump((unsigned char *)data, ret);
 
-    return ret+sizeof(fake_iphdr)+sizeof(fake_udphdr);
+    return real_pacl;
 }
 
 int depack_udp(void* data, int ret){
@@ -159,11 +167,12 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     printf("entering callback\n");
     int ret = nfq_get_payload(nfa, (unsigned char **)&data);
     if(chk_url((unsigned char*)data))    {
-        IPv4Address proxy_server_addr("121.186.5.123");
-        //IPv4Address proxy_server_addr("192.168.231.146");
-        uint16_t proxy_dport = 17777;
+        //IPv4Address proxy_server_addr("121.186.5.123");
+        IPv4Address proxy_server_addr("192.168.231.146");
+        //IPv4Address proxy_server_addr("210.117.183.125");
+        uint16_t proxy_dport = 28888;
 
-        ret = enpack_udp(proxy_server_addr, proxy_dport, data, ret);
+        ret = enpack_tcp(proxy_server_addr, proxy_dport, data, ret);
 
         return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
     }
