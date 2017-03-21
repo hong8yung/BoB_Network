@@ -9,6 +9,7 @@
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <pcap/pcap.h>
 
+#include <netinet/ether.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -240,36 +241,22 @@ int main(int argc, char *argv[])
     }
 
     while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
-        if(ntohs(*((unsigned short*)&(pkt_data[12])))!=TYPE_IP) continue; // case by not follow ip header
+        ether_header *p_ethhdr = (ether_header *)pkt_data;
+        iphdr *p_iphdr = (iphdr *)(pkt_data + sizeof(ether_header));
+        tcphdr *p_tcphdr = NULL;
+        if(!p_iphdr) continue;
+        else{
+            if(p_iphdr->protocol == IPPROTO_TCP){
+                p_tcphdr = (tcphdr *)(pkt_data + sizeof(ether_header) + p_iphdr->ihl*4);
+                if(p_tcphdr->dest == htons(28888)){
 
-        for(int i=0; i<38; i++){    // print for header(HEX)
-            if(!(i%8)) printf("\n");
-            printf("%02X ",*(pkt_data+i));
+                }
+
+            }else{
+                continue;
+            }
+
         }
-        printf("\n");
-
-        for(int i=0; i<6; i++){
-            dm[i] = (pkt_data[DM+i]);
-        }
-
-        for(int i=0; i<6; i++){
-            sm[i] = (pkt_data[SM+i]);
-        }
-
-        printf("\nSource Mac : ");
-        print_MAC(sm);
-
-        printf("Destination Mac : ");
-        print_MAC(dm);
-
-        sip = ntohl(*((unsigned long*)&(pkt_data[SIP])));
-        dip = ntohl(*((unsigned long*)&(pkt_data[DIP])));
-
-        printf("\nSource Ip : ");
-        print_IP(sip);
-
-        printf("Destination Ip : ");
-        print_IP(dip);
 
         if((pkt_data[PID]==IP_TCP)||(pkt_data[PID]==IP_UDP)){
             sport = ntohs(*((unsigned short*)&(pkt_data[SPORT])));
