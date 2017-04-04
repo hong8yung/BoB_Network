@@ -10,10 +10,105 @@
 
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+
 #include <netinet/udp.h>
 
 using namespace std;
 using namespace Tins;
+
+static bool conti = true;
+
+
+uint16_t ip_chsum_calc(uint16_t ip_hdrlen, uint16_t *p16_iphdr){
+    uint32_t sum = 0;
+    iphdr * ip_info = (iphdr *)p16_iphdr;
+
+    // set checksum file to null
+    ip_info->check = 0;
+
+    // sum of ipheader
+    for(int i=0; i<ip_hdrlen/2; i++){
+        sum = sum + (u_int)(ntohs(p16_iphdr[i]));
+    }
+
+    while( sum >> 16 )
+        sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+
+    sum = ~sum;
+    return (uint16_t)sum;
+}
+
+uint16_t tcp_chsum_calc(iphdr* ipHdr, tcphdr* tcpHdr)
+{
+  int i;
+  int tcpHdrDataLen;
+  uint32_t src, dst;
+  uint32_t sum=0;
+  uint16_t *p;
+
+
+  tcpHdrDataLen = ntohs(ipHdr->tot_len) - sizeof(iphdr);
+
+  // Add tcpHdr and data buffer as array of UIN16
+  p = (uint16_t*)tcpHdr;
+  for (i = 0; i < tcpHdrDataLen / 2; i++)
+  {
+    sum += htons(*p);
+    p++;
+  }
+
+  // If length is odd, add last data(padding)
+  if ((tcpHdrDataLen / 2) * 2 != tcpHdrDataLen)
+    sum += (htons(*p) & 0xFF00);
+
+  // Decrease checksum from sum
+  sum -= ntohs(tcpHdr->th_sum);
+
+  // Add src address
+  src = ntohl(ipHdr->saddr);
+  sum += ((src & 0xFFFF0000) >> 16) + (src & 0x0000FFFF);
+
+  // Add dst address
+  dst = ntohl(ipHdr->daddr);
+  sum += ((dst & 0xFFFF0000) >> 16) + (dst & 0x0000FFFF);
+
+  // Add extra information
+  sum += (uint32_t)(tcpHdrDataLen) + IPPROTO_TCP;
+
+  // Recalculate sum
+  while(sum >> 16)
+  {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
+  sum = ~sum;
+
+  return (uint16_t)sum;
+}
+
+char* my_strstr(const char *in, const char *str, unsigned int size)
+{
+    char c;
+    size_t len;
+
+    c = *str++;
+    if (!c)
+        return (char *) in;	// Trivial empty string case
+
+    len = strlen(str);
+    //len = size;
+    do {
+        char sc;
+
+        do {
+            size--;
+            sc = *in++;
+            if (!sc || !size)   // size check
+                return (char *) 0;
+        } while (sc != c);
+    } while (strncmp(in, str, len) != 0);
+
+    return (char *) (in - 1);
+}
 
 void hexdump(unsigned char * buf, int size){
     int i;
@@ -21,22 +116,28 @@ void hexdump(unsigned char * buf, int size){
         if(i%16==0) printf("\n");
         printf("%02X ", buf[i]);
     }
+    cout << "!!!!!!!!!!!!" << endl;
 }
 
 bool chk_url(unsigned char * buf){
     struct iphdr * ip_info = (struct iphdr *)buf;
     if(!ip_info) return false;
 
-    struct tcphdr * tcp_info = (struct tcphdr *)(buf + sizeof(*ip_info));
+    struct tcphdr * tcp_info = (struct tcphdr *)(buf + (ip_info->ihl*4));
     if(!tcp_info) return false;
 
-    unsigned char * http_info = buf + sizeof(*ip_info) + sizeof(*tcp_info);
+    unsigned char * http_info = buf + (ip_info->ihl*4) + (tcp_info->doff*4);
+
     if(!http_info) return false;
     //check err point addr
 
     //if(tcp_info->dest !=80) return false;   //
-    char *tmp_url = "Host: www.sex.com";
-    char * p = strstr((char *)http_info, (const char *)tmp_url);
+    char *tmp_url = "Host: www.sex.com\r\n";
+    //char *tmp_url = "Host: daum.net";
+
+    char * p = my_strstr((char *)http_info, (const char *)tmp_url, 50);
+
+    printf("p = %lld", p);
 
     if(p)   return true;
     else return false;
@@ -55,6 +156,28 @@ bool chk_mypacket(unsigned char * buf){
 
     if(udp_info->uh_dport==28888) return true;
 
+    else return false;
+}
+
+bool chk_nfp(unsigned char * buf){
+    struct iphdr * ip_info = (struct iphdr *)buf;
+    if(!ip_info) return false;
+
+    struct tcphdr * tcp_info = (struct tcphdr *)(buf + (ip_info->ihl*4));
+    if(!tcp_info) return false;
+
+    unsigned char * http_info = buf + (ip_info->ihl*4) + (tcp_info->doff*4);
+
+    if(!http_info) return false;
+    //check err point addr
+
+    //if(tcp_info->dest !=80) return false;   //
+    char *tmp_url = "HTTP/1.1 404 Not Found\r\n";
+    //char *tmp_url = "Host: daum.net";
+
+    char * p = my_strstr((char *)http_info, (const char *)tmp_url,50);
+
+    if(p)   return true;
     else return false;
 }
 
@@ -113,13 +236,66 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     return id;
 }
 
+
+int change_pack(IPv4Address ipdadr, void* data, int ret){
+    struct iphdr fake_iphdr, *p_iphdr;
+    struct tcphdr *p_tcphdr;
+
+    p_iphdr = (iphdr *)data;
+    (*(uint32_t*)((unsigned char*)p_iphdr + 16)) = uint32_t(ipdadr);
+    //memcpy((unsigned char*)data+, (unsigned char *)data,(p_iphdr->ihl)*4);  // !!! need except try ip header len != 40?
+
+    p_iphdr->check = htons(ip_chsum_calc(((uint16_t)(p_iphdr->ihl))*4, (uint16_t *)p_iphdr));
+
+    p_tcphdr = (tcphdr *)(data+(p_iphdr->ihl)*4);
+    (*(uint16_t*)((unsigned char*)p_tcphdr + 2)) = htons(uint16_t(28888));
+
+    p_tcphdr->check = htons(tcp_chsum_calc(p_iphdr, p_tcphdr));
+
+    hexdump((unsigned char *)data, ret);
+    //hexdump((unsigned char *)data, ret);
+
+    return ret;
+}
+
+int enpack_http(void* data, int ret){
+    struct iphdr fake_iphdr, *p_iphdr;
+    struct tcphdr fake_tcphdr, *p_tcphdr;
+    int fake_hdl, real_pacl;
+    unsigned char* tmp_data[1500], *p_http;
+    char * fake_header = "GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n";
+
+    p_iphdr = (iphdr *)data;
+    p_iphdr->tot_len += htons(40);
+    p_iphdr->check = htons(ip_chsum_calc(((uint16_t)(p_iphdr->ihl))*4, (uint16_t *)p_iphdr));
+
+    p_tcphdr = (tcphdr *)(data+(p_iphdr->ihl)*4);
+
+    p_http = (unsigned char *)(p_tcphdr)+(p_tcphdr->doff)*4;
+
+    real_pacl = ret-((p_iphdr->ihl)*4)-((p_tcphdr->doff)*4);
+
+    memcpy(tmp_data,p_http,real_pacl);
+    memcpy(p_http, fake_header, 40);
+    memcpy(p_http+40,tmp_data, real_pacl);
+
+    p_tcphdr->check = htons(tcp_chsum_calc(p_iphdr, p_tcphdr));
+
+    cout << fake_header << endl;
+    hexdump((unsigned char *)data, ret+40);
+    cout << "checksume = " << p_iphdr->check << endl;
+
+    return ret+40;
+}
+
 int enpack_tcp(IPv4Address ipdadr, uint16_t utcp, void* data, int ret){
     struct iphdr fake_iphdr, *p_iphdr;
     struct tcphdr fake_tcphdr, *p_tcphdr;
     int fake_hdl, real_pacl;
+    unsigned char* tmp_data[1500];
 
     p_iphdr = (iphdr *)data;
-    memcpy(&fake_iphdr, (unsigned char *)data,(p_iphdr->ihl)*4);  // !!! need except try ip header len != 40?
+    memcpy(&fake_iphdr, (unsigned char *)data,(p_iphdr->ihl)*4);
 
     p_tcphdr = (tcphdr *)(data+(p_iphdr->ihl)*4);
     memcpy(&fake_tcphdr, (unsigned char *)data+(p_iphdr->ihl)*4,(p_tcphdr->doff)*4);
@@ -132,13 +308,16 @@ int enpack_tcp(IPv4Address ipdadr, uint16_t utcp, void* data, int ret){
     fake_tcphdr.dest = htons(utcp);
 
     fake_hdl = (p_iphdr->ihl)*4+(p_tcphdr->doff)*4;
+
+    fake_iphdr.tot_len += htons(fake_hdl);
     real_pacl = ret+fake_hdl;
 
-    memcpy((unsigned char *)data +fake_hdl, data, ret);    // backup
-
+    //memcpy((unsigned char *)data +fake_hdl, data, ret);    // backup
+    memcpy(tmp_data, data, ret);
 
     memcpy((unsigned char *)data, &fake_iphdr, (fake_iphdr.ihl)*4);
     memcpy((unsigned char *)data+(fake_iphdr.ihl)*4, &fake_tcphdr, (fake_tcphdr.doff)*4);
+    memcpy((unsigned char *)data+fake_hdl, tmp_data, ret);
 
     hexdump((unsigned char *)data, ret);
     //hexdump((unsigned char *)data, ret);
@@ -166,30 +345,24 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
     u_int32_t id = print_pkt(nfa);
     printf("entering callback\n");
     int ret = nfq_get_payload(nfa, (unsigned char **)&data);
-    if(chk_url((unsigned char*)data))    {
-        //IPv4Address proxy_server_addr("121.186.5.123");
-        IPv4Address proxy_server_addr("192.168.231.146");
+    if(chk_url((unsigned char*)data) /*&& conti */ )    {
+    //if(1)    {
+        conti = false;
+        IPv4Address proxy_server_addr("59.2.80.104");   // home
+        //IPv4Address proxy_server_addr("172.30.1.56");
         //IPv4Address proxy_server_addr("210.117.183.125");
         uint16_t proxy_dport = 28888;
 
-        ret = enpack_tcp(proxy_server_addr, proxy_dport, data, ret);
+        //ret = enpack_tcp(proxy_server_addr, proxy_dport, data, ret);
+        //ret = change_pack(proxy_server_addr,data,ret);
+        ret = enpack_http(data, ret);
 
+        cout << "hey you!" << endl;
         return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
-    }
-    else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
-}
-
-static int cb2(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
-          struct nfq_data *nfa, void *data)
-{
-    u_int32_t id = print_pkt(nfa);
-    printf("entering callback\n");
-    int ret = nfq_get_payload(nfa, (unsigned char **)&data);
-    if(chk_mypacket((unsigned char*)data))    {
-
-        ret = depack_udp(data, ret);
-
-        return nfq_set_verdict(qh, id, NF_ACCEPT, ret, (const unsigned char *)data);
+    }else if(chk_nfp((unsigned char*)data)){
+        hexdump((unsigned char *)data, ret);
+        cout << "DROP the bittttttttt!!!!" << endl;
+        return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
     }
     else return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
@@ -227,7 +400,6 @@ int main(int argc, char **argv)
 
     if(argv[1]){ // server
         cout << "server start ! " << endl;
-        qh = nfq_create_queue(h,  0, &cb2, NULL);
     } else {    // client
         qh = nfq_create_queue(h,  0, &cb, NULL);
     }
