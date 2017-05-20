@@ -82,48 +82,50 @@ bool chk_packet(unsigned char * data){
 
 int main(int argc, char *argv[])
 {
-    char errbuf[PCAP_ERRBUF_SIZE];
-    char * spNetDevName = pcap_lookupdev(errbuf);
-    pcap_t* pDes;
-    bpf_u_int32 mask;
-    bpf_u_int32 net;
+    const unsigned char *pkt_data;
+    char error_buffer[PCAP_ERRBUF_SIZE];
+    pcap_t *pDes = pcap_create("net0", error_buffer);
+
+    pcap_set_rfmon(pDes, 1);
+    pcap_set_promisc(pDes, 1); /* Capture packets that are not yours */
+    pcap_set_snaplen(pDes, 2048); /* Snapshot length */
+    pcap_set_timeout(pDes, 1000); /* Timeout in milliseconds */
+    pcap_activate(pDes);
+    /* handle is ready for use with pcap_next() or pcap_loop() */
+
+
+    struct pcap_pkthdr* header;
+
 
     int res;
-    struct pcap_pkthdr *header;
-    const unsigned char *pkt_data;
+
 
     void print_IP(unsigned long ip);
 
-    if(0 == spNetDevName){
-        printf("errbuf  :[%s]\n",errbuf);
-        return 100;
-    }else{
-        printf("Network Device Name : [%s]\n", spNetDevName);
-    }
 
-    if (pcap_lookupnet(spNetDevName, &net, &mask, errbuf) == -1) {
-                fprintf(stderr, "Couldn't get netmask for device %s: %s\n", spNetDevName, errbuf);
-                net = 0;
-                mask = 0;
-            }
-
-    pDes = pcap_open_live(spNetDevName, 1500, 1 ,0, errbuf);
+    /*
     if(0 == pDes){
         printf("[-]Error : [%s]\n",errbuf);
         return 101;
     }else{
         printf("[+]Network Device Ready!\n");
-    }
+    }*/
 
     while((res=pcap_next_ex(pDes, &header, &pkt_data))>=0){
+        if(pkt_data){
+            hexdump((unsigned char *)pkt_data, header->caplen);
+        }
         if(!chk_packet((unsigned char *)pkt_data)) continue;
         else{
             printf("http packet !!! \n");
             printf("========================================================\n");
         }
     }
+
     return 0;
 }
+
+
 
 void print_IP(unsigned long ip){
     for(int i=0; i<4; i++){
