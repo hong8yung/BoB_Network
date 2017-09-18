@@ -9,8 +9,11 @@
 #include <net/if.h>
 #include <pthread.h>
 #include <netinet/in.h>
+#include <unistd.h>
 
 #define BUFSIZE 8192
+
+bool flag_f = false;
 
 using namespace std;
 
@@ -96,11 +99,25 @@ int main(int argc, char *argv[])
 
     struct pcap_pkthdr* header;
 
-
     int res;
-
+    int param_opt;
 
     void print_IP(unsigned long ip);
+
+    while( -1 !=( param_opt = getopt( argc, argv, "f:")))
+      {
+         switch( param_opt)
+         {
+         case 'f':
+            flag_f  = true;
+            pDes = pcap_open_offline(optarg, error_buffer);
+            if (pDes == NULL){
+                fprintf(stderr, "Not Found pcap file\n");
+                exit(-1);
+            }
+            break;
+         }
+      }
 
 
     /*
